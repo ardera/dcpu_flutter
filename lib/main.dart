@@ -12,7 +12,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:tuple/tuple.dart';
 
 void main() {
   runApp(const MyApp());
@@ -115,7 +114,7 @@ class _DcpuLoadFileDialogState extends State<DcpuLoadFileDialog> {
               child: const Text('Select File'),
             ),
             const Padding(
-              padding: const EdgeInsets.only(top: 24),
+              padding: EdgeInsets.only(top: 24),
             ),
             Row(
               mainAxisSize: MainAxisSize.min,
@@ -126,16 +125,19 @@ class _DcpuLoadFileDialogState extends State<DcpuLoadFileDialog> {
                 ),
                 TextButton(
                   onPressed: file != null
-                      ? () => Navigator.of(context).pop(
-                            Tuple2(
-                              file!,
-                              DcpuCompatibilityFlags(
-                                fileLoadEndian:
-                                    bigEndian ? Endian.big : Endian.little,
-                                memoryBehaviour: memoryBehaviour,
-                              ),
+                      ? () {
+                          final endian = bigEndian ? Endian.big : Endian.little;
+
+                          final result = (
+                            file!,
+                            DcpuCompatibilityFlags(
+                              fileLoadEndian: endian,
+                              memoryBehaviour: memoryBehaviour,
                             ),
-                          )
+                          );
+
+                          Navigator.of(context).pop(result);
+                        }
                       : null,
                   child: const Text('Ok'),
                 )
@@ -211,17 +213,14 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   void loadFile() async {
-    final fileAndFlags =
-        await showDialog<Tuple2<File, DcpuCompatibilityFlags>?>(
+    final result = await showDialog<(File, DcpuCompatibilityFlags)?>(
       context: context,
       builder: (_) => const DcpuLoadFileDialog(),
     );
 
-    if (fileAndFlags != null) {
-      reset(
-        file: fileAndFlags.item1,
-        flags: fileAndFlags.item2,
-      );
+    if (result != null) {
+      final (file, flags) = result;
+      reset(file: file, flags: flags);
     }
   }
 

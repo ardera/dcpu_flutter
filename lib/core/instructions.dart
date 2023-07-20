@@ -1,6 +1,5 @@
 import 'package:dcpu_flutter/core/cpu.dart';
 import 'package:dcpu_flutter/core/math.dart';
-import 'package:tuple/tuple.dart';
 
 abstract class Instruction {
   const Instruction({required this.op});
@@ -249,15 +248,15 @@ abstract class Op {
     Dcpu state,
     Arg a,
     Arg b, {
-    required Tuple2<int, int> Function(int a, int b) compute,
+    required ({int b, int ex}) Function(int a, int b) compute,
   }) {
     final bCaptured = b.read(state);
     final aCaptured = a.read(state);
 
     final result = compute(aCaptured, bCaptured);
 
-    b.write(state, result.item1);
-    state.regs.ex = result.item2;
+    b.write(state, result.b);
+    state.regs.ex = result.ex;
   }
 
   void readBreadA(
@@ -290,7 +289,7 @@ abstract class Op {
     Dcpu state,
     Arg a,
     Arg b, {
-    required Tuple2<int, int> Function(int a, int b, int ex) compute,
+    required ({int b, int ex}) Function(int a, int b, int ex) compute,
   }) {
     final bCaptured = b.read(state);
     final aCaptured = a.read(state);
@@ -298,8 +297,8 @@ abstract class Op {
 
     final result = compute(aCaptured, bCaptured, exCaptured);
 
-    b.write(state, result.item1);
-    state.regs.ex = result.item2;
+    b.write(state, result.b);
+    state.regs.ex = result.ex;
   }
 }
 
@@ -351,9 +350,9 @@ class AddOp extends BasicOp {
       a,
       b,
       compute: (a, b) {
-        return Tuple2(
-          add16bit(a, b),
-          add16bitOverflows(a, b) ? 1 : 0,
+        return (
+          b: add16bit(a, b),
+          ex: add16bitOverflows(a, b) ? 1 : 0,
         );
       },
     );
@@ -378,9 +377,9 @@ class SubOp extends BasicOp {
       a,
       b,
       compute: (a, b) {
-        return Tuple2(
-          sub16bit(b, a),
-          sub16bitUnderflows(b, a) ? 0xFFFF : 0,
+        return (
+          b: sub16bit(b, a),
+          ex: sub16bitUnderflows(b, a) ? 0xFFFF : 0,
         );
       },
     );
@@ -406,9 +405,9 @@ class MulOp extends BasicOp {
       b,
       compute: (a, b) {
         final multiplied = a * b;
-        return Tuple2(
-          to16bit(multiplied),
-          to16bit(multiplied >> 16),
+        return (
+          b: to16bit(multiplied),
+          ex: to16bit(multiplied >> 16),
         );
       },
     );
@@ -438,9 +437,9 @@ class MliOp extends BasicOp {
 
         final multiplied = b * a;
 
-        return Tuple2(
-          to16bit(multiplied & 0xffff),
-          to16bit(multiplied >> 16),
+        return (
+          b: to16bit(multiplied & 0xffff),
+          ex: to16bit(multiplied >> 16),
         );
       },
     );
@@ -466,11 +465,11 @@ class DivOp extends BasicOp {
       b,
       compute: (a, b) {
         if (a == 0) {
-          return const Tuple2(0, 0);
+          return const (b: 0, ex: 0);
         } else {
-          return Tuple2(
-            to16bit(b ~/ a),
-            to16bit((b << 16) ~/ a),
+          return (
+            b: to16bit(b ~/ a),
+            ex: to16bit((b << 16) ~/ a),
           );
         }
       },
@@ -497,14 +496,14 @@ class DviOp extends BasicOp {
       b,
       compute: (a, b) {
         if (a == 0) {
-          return const Tuple2(0, 0);
+          return const (b: 0, ex: 0);
         } else {
           a = from16bitsigned(a);
           b = from16bitsigned(b);
 
-          return Tuple2(
-            to16bit(b ~/ a),
-            to16bit((b << 16) ~/ a),
+          return (
+            b: to16bit(b ~/ a),
+            ex: to16bit((b << 16) ~/ a),
           );
         }
       },
@@ -661,9 +660,9 @@ class ShrOp extends BasicOp {
       a,
       b,
       compute: (a, b) {
-        return Tuple2(
-          to16bit(b >>> a),
-          to16bit((b << 16) >> a),
+        return (
+          b: to16bit(b >>> a),
+          ex: to16bit((b << 16) >> a),
         );
       },
     );
@@ -690,9 +689,9 @@ class AsrOp extends BasicOp {
       compute: (a, b) {
         b = from16bitsigned(b);
 
-        return Tuple2(
-          to16bit(b >> a),
-          to16bit((b << 16) >>> a),
+        return (
+          b: to16bit(b >> a),
+          ex: to16bit((b << 16) >>> a),
         );
       },
     );
@@ -717,9 +716,9 @@ class ShlOp extends BasicOp {
       a,
       b,
       compute: (a, b) {
-        return Tuple2(
-          to16bit(b << a),
-          to16bit((b << a) >> 16),
+        return (
+          b: to16bit(b << a),
+          ex: to16bit((b << a) >> 16),
         );
       },
     );
@@ -943,9 +942,9 @@ class AdxOp extends BasicOp {
       b,
       compute: (a, b, ex) {
         final sum = a + b + ex;
-        return Tuple2(
-          to16bit(sum),
-          sum > 0xFFFF ? 1 : 0,
+        return (
+          b: to16bit(sum),
+          ex: sum > 0xFFFF ? 1 : 0,
         );
       },
     );
@@ -971,9 +970,9 @@ class SbxOp extends BasicOp {
       b,
       compute: (a, b, ex) {
         final sum = a - b + ex;
-        return Tuple2(
-          to16bit(sum),
-          sum < 0 ? 0xFFFF : 0,
+        return (
+          b: to16bit(sum),
+          ex: sum < 0 ? 0xFFFF : 0,
         );
       },
     );
