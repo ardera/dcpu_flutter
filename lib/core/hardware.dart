@@ -1,4 +1,6 @@
 import 'package:dcpu_flutter/core/cpu.dart';
+import 'package:dcpu_flutter/core/memory.dart';
+import 'package:dcpu_flutter/peripherals/keyboard.dart';
 import 'package:dcpu_flutter/peripherals/lem1802.dart';
 
 class HardwareInfo {
@@ -21,8 +23,19 @@ abstract class HardwareDevice {
   void requestInterrupt(Dcpu cpu);
 }
 
+enum DeviceMemoryBehaviour {
+  mapped,
+  syncInOnly,
+  syncOutOnly,
+  syncInOut,
+}
+
 class HardwareController {
   final _devices = <HardwareDevice>[];
+
+  DeviceMemoryBehaviour memoryBehaviour;
+
+  HardwareController({this.memoryBehaviour = DeviceMemoryBehaviour.mapped});
 
   void addDevice(HardwareDevice device) {
     _devices.add(device);
@@ -57,5 +70,48 @@ class HardwareController {
           (device) => device is Lem1802Device,
           orElse: () => null,
         ) as Lem1802Device?;
+  }
+
+  GenericKeyboard? findKeyboard() {
+    return _devices.cast<HardwareDevice?>().singleWhere(
+          (device) => device is GenericKeyboard,
+          orElse: () => null,
+        ) as GenericKeyboard?;
+  }
+
+  void mapDeviceMemory({
+    required Dcpu cpu,
+    required int start,
+    required int length,
+    int destinationOffset = 0,
+    required Memory memory,
+  }) {
+    cpu.memory.unmap(start, length);
+    cpu.memory.map(start, length, destinationOffset, memory);
+
+    if (memoryBehaviour == DeviceMemoryBehaviour.syncInOnly ||
+        memoryBehaviour == DeviceMemoryBehaviour.syncInOut) {
+      for (var offset = 0; offset < length; offset++) {
+        memory.write(offset + destinationOffset, cpu.ram.read(offset + start));
+      }
+    }
+  }
+
+  void unmapDeviceMemory({
+    required Dcpu cpu,
+    required int start,
+    required int length,
+    int destinationOffset = 0,
+    required Memory memory,
+  }) {
+    cpu.memory.unmap(start, length);
+    cpu.memory.map(start, length, start, cpu.ram);
+
+    if (memoryBehaviour == DeviceMemoryBehaviour.syncOutOnly ||
+        memoryBehaviour == DeviceMemoryBehaviour.syncInOut) {
+      for (var offset = 0; offset < length; offset++) {
+        cpu.ram.write(offset + start, memory.read(offset + destinationOffset));
+      }
+    }
   }
 }

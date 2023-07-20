@@ -1,10 +1,9 @@
 import 'package:dcpu_flutter/core/cpu.dart';
 import 'package:dcpu_flutter/core/math.dart';
-import 'package:flutter/material.dart';
 import 'package:tuple/tuple.dart';
 
 abstract class Instruction {
-  Instruction({required this.op});
+  const Instruction({required this.op});
 
   static Instruction decode(int Function() readWord) {
     final firstWord = readWord();
@@ -380,8 +379,8 @@ class SubOp extends BasicOp {
       b,
       compute: (a, b) {
         return Tuple2(
-          sub16bit(a, b),
-          sub16bitUnderflows(a, b) ? 0xFFFF : 0,
+          sub16bit(b, a),
+          sub16bitUnderflows(b, a) ? 0xFFFF : 0,
         );
       },
     );
@@ -434,10 +433,13 @@ class MliOp extends BasicOp {
       a,
       b,
       compute: (a, b) {
-        /// TODO: signed
-        final multiplied = a * b;
+        a = from16bitsigned(a);
+        b = from16bitsigned(b);
+
+        final multiplied = b * a;
+
         return Tuple2(
-          to16bit(multiplied),
+          to16bit(multiplied & 0xffff),
           to16bit(multiplied >> 16),
         );
       },
@@ -497,6 +499,9 @@ class DviOp extends BasicOp {
         if (a == 0) {
           return const Tuple2(0, 0);
         } else {
+          a = from16bitsigned(a);
+          b = from16bitsigned(b);
+
           return Tuple2(
             to16bit(b ~/ a),
             to16bit((b << 16) ~/ a),
@@ -556,7 +561,10 @@ class MdiOp extends BasicOp {
         if (a == 0) {
           return 0;
         } else {
-          return b % a;
+          a = from16bitsigned(a);
+          b = from16bitsigned(b);
+
+          return to16bit(b % a);
         }
       },
     );
@@ -680,7 +688,8 @@ class AsrOp extends BasicOp {
       a,
       b,
       compute: (a, b) {
-        /// TODO: Treat b as signed
+        b = from16bitsigned(b);
+
         return Tuple2(
           to16bit(b >> a),
           to16bit((b << 16) >>> a),
@@ -855,7 +864,9 @@ class IfaOp extends BranchingOp {
       a,
       b,
       compute: (a, b) {
-        /// TODO: Treat a, b as signed
+        a = from16bitsigned(a);
+        b = from16bitsigned(b);
+
         return !(b > a);
       },
     );
@@ -904,7 +915,9 @@ class IfuOp extends BranchingOp {
       a,
       b,
       compute: (a, b) {
-        /// TODO: Treat a, b as signed
+        a = from16bitsigned(a);
+        b = from16bitsigned(b);
+
         return !(b < a);
       },
     );

@@ -2,6 +2,8 @@
 
 import 'dart:async';
 import 'dart:collection';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:clock/clock.dart';
 import 'package:dcpu_flutter/core/hardware.dart';
@@ -147,12 +149,30 @@ class RegisterFile {
   }
 }
 
+class DcpuCompatibilityFlags {
+  const DcpuCompatibilityFlags({
+    this.fileLoadEndian = Endian.little,
+    this.memoryBehaviour = DeviceMemoryBehaviour.mapped,
+  });
+
+  final Endian fileLoadEndian;
+  final DeviceMemoryBehaviour memoryBehaviour;
+}
+
 class Dcpu {
+  Dcpu({
+    this.compatibilityFlags = const DcpuCompatibilityFlags(),
+  }) : hardwareController = HardwareController(
+          memoryBehaviour: compatibilityFlags.memoryBehaviour,
+        );
+
+  final DcpuCompatibilityFlags compatibilityFlags;
+
   final regs = RegisterFile();
   final ram = RAM();
   late final memory = VirtualMemory()..map(0, 65536, 0, ram);
   final interruptController = InterruptController();
-  final hardwareController = HardwareController();
+  final HardwareController hardwareController;
   final _fakeAsync = FakeAsync();
   final _realtimeWatch = Stopwatch();
 
@@ -259,6 +279,19 @@ class Dcpu {
     }
 
     return Instruction.decode(readWord).disassemble();
+  }
+
+  int loadFile(
+    File file, {
+    int offset = 0,
+    int? length,
+  }) {
+    return ram.loadFile(
+      file,
+      offset: offset,
+      length: length,
+      endian: compatibilityFlags.fileLoadEndian,
+    );
   }
 
   /// Execute or skip one instruction and advance processor clock.

@@ -1,14 +1,18 @@
 import 'dart:async';
-import 'dart:ffi';
 import 'dart:io';
 import 'dart:ui';
 
 import 'package:dcpu_flutter/core/cpu.dart';
+import 'package:dcpu_flutter/core/hardware.dart';
 import 'package:dcpu_flutter/dcpu_view.dart';
 import 'package:dcpu_flutter/peripherals/clock.dart';
+import 'package:dcpu_flutter/peripherals/keyboard.dart';
 import 'package:dcpu_flutter/peripherals/lem1802.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:tuple/tuple.dart';
 
 void main() {
   runApp(const MyApp());
@@ -40,6 +44,110 @@ class MyHomePage extends StatefulWidget {
   State<MyHomePage> createState() => _MyHomePageState();
 }
 
+class DcpuLoadFileDialog extends StatefulWidget {
+  const DcpuLoadFileDialog({super.key});
+
+  @override
+  State<DcpuLoadFileDialog> createState() => _DcpuLoadFileDialogState();
+}
+
+class _DcpuLoadFileDialogState extends State<DcpuLoadFileDialog> {
+  var bigEndian = false;
+  var memoryBehaviour = DeviceMemoryBehaviour.syncInOut;
+  File? file;
+
+  void selectFile() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles();
+
+    if (result != null) {
+      final file = File(result.files.single.path!);
+
+      setState(() {
+        this.file = file;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      child: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CheckboxListTile(
+              title: const Text('Big Endian'),
+              value: bigEndian,
+              onChanged: (bigEndian) {
+                setState(() => this.bigEndian = bigEndian!);
+              },
+            ),
+            ListTile(
+              title: const Text('Device Memory Behaviour'),
+              trailing: DropdownButton(
+                items: const [
+                  DropdownMenuItem<DeviceMemoryBehaviour>(
+                    value: DeviceMemoryBehaviour.mapped,
+                    child: Text('mapped'),
+                  ),
+                  DropdownMenuItem<DeviceMemoryBehaviour>(
+                    value: DeviceMemoryBehaviour.syncInOnly,
+                    child: Text('sync-in'),
+                  ),
+                  DropdownMenuItem<DeviceMemoryBehaviour>(
+                    value: DeviceMemoryBehaviour.syncOutOnly,
+                    child: Text('sync-out'),
+                  ),
+                  DropdownMenuItem<DeviceMemoryBehaviour>(
+                    value: DeviceMemoryBehaviour.syncInOut,
+                    child: Text('sync-in-out'),
+                  ),
+                ],
+                value: memoryBehaviour,
+                onChanged: (value) {
+                  setState(() => memoryBehaviour = value!);
+                },
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () => selectFile(),
+              child: const Text('Select File'),
+            ),
+            const Padding(
+              padding: const EdgeInsets.only(top: 24),
+            ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(null),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: file != null
+                      ? () => Navigator.of(context).pop(
+                            Tuple2(
+                              file!,
+                              DcpuCompatibilityFlags(
+                                fileLoadEndian:
+                                    bigEndian ? Endian.big : Endian.little,
+                                memoryBehaviour: memoryBehaviour,
+                              ),
+                            ),
+                          )
+                      : null,
+                  child: const Text('Ok'),
+                )
+              ],
+            )
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _MyHomePageState extends State<MyHomePage> {
   late Dcpu dcpu;
 
@@ -58,18 +166,7 @@ class _MyHomePageState extends State<MyHomePage> {
   void initState() {
     super.initState();
 
-    dcpu = Dcpu();
-
-    dcpu.ram.loadFile(
-      //File(r'C:\Users\hanne\Desktop\DCPU-emulator by MrSmith33 v0.2\clock.bin'),
-      File(
-          r'C:\Users\hanne\Desktop\DCPU-emulator by MrSmith33 v0.2\hwtest2.bin'),
-    );
-
-    dcpu.hardwareController.addDevice(Lem1802Device());
-    dcpu.hardwareController.addDevice(GenericClock());
-
-    fetchStats();
+    reset();
   }
 
   @override
@@ -80,24 +177,51 @@ class _MyHomePageState extends State<MyHomePage> {
     super.dispose();
   }
 
-  void reset() {
+  bool isKeyPressed(LogicalKeyboardKey key) {
+    return HardwareKeyboard.instance.logicalKeysPressed.contains(key);
+  }
+
+  void reset({
+    flags = const DcpuCompatibilityFlags(
+      memoryBehaviour: DeviceMemoryBehaviour.syncInOut,
+    ),
+    File? file,
+  }) {
     if (timer != null) pause();
 
-    dcpu = Dcpu();
+    dcpu = Dcpu(compatibilityFlags: flags);
+
+    dcpu.loadFile(
+      //File(r'C:\Users\hanne\Desktop\DCPU-emulator by MrSmith33 v0.2\clock.bin'),
+      file ??
+          File(
+              r'C:\Users\hanne\Desktop\DCPU-emulator by MrSmith33 v0.2\hwtest2.bin'),
+    );
 
     dcpu.hardwareController.addDevice(Lem1802Device());
     dcpu.hardwareController.addDevice(GenericClock());
+    dcpu.hardwareController.addDevice(
+      GenericKeyboard(
+        isKeyPressed: isKeyPressed,
+        swapArrowLeftRight: true,
+      ),
+    );
 
     fetchStats();
   }
 
   void loadFile() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles();
+    final fileAndFlags =
+        await showDialog<Tuple2<File, DcpuCompatibilityFlags>?>(
+      context: context,
+      builder: (_) => const DcpuLoadFileDialog(),
+    );
 
-    if (result != null) {
-      dcpu.ram.loadFile(File(result.files.single.path!));
-    } else {
-      // User canceled the picker
+    if (fileAndFlags != null) {
+      reset(
+        file: fileAndFlags.item1,
+        flags: fileAndFlags.item2,
+      );
     }
   }
 
@@ -301,7 +425,24 @@ class _MyHomePageState extends State<MyHomePage> {
                 margin: const EdgeInsets.all(16),
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
-                  child: DcpuView(cpu: dcpu),
+                  child: Focus(
+                    autofocus: true,
+                    child: DcpuView(cpu: dcpu),
+                    onKeyEvent: (node, event) {
+                      if (event is! KeyDownEvent) {
+                        return KeyEventResult.handled;
+                      }
+
+                      final keyboard = dcpu.hardwareController.findKeyboard();
+
+                      if (keyboard != null) {
+                        debugPrint('onKeyEvent: $event');
+                        keyboard.onKeyEvent(event, dcpu);
+                      }
+
+                      return KeyEventResult.handled;
+                    },
+                  ),
                 ),
               ),
             ),

@@ -50,18 +50,21 @@ class GenericClock extends HardwareDevice {
   }
 
   void queryTicks(Dcpu cpu) {
+    late int c;
     if (_initialTime != null && _tickDuration != null) {
       final elapsedMicroseconds =
           cpu.getClock().now().difference(_initialTime!).inMicroseconds;
 
       final result = elapsedMicroseconds ~/ _tickDuration!.inMicroseconds;
 
-      debugPrint('CLOCK_QUERY = $result');
-
-      cpu.regs.c = result;
+      c = result;
     } else {
-      cpu.regs.c = 0;
+      c = 0;
     }
+
+    debugPrint('CLOCK_QUERY = ${hexstring(c)}');
+
+    cpu.regs.c = c;
   }
 
   void setInterrupts(Dcpu cpu) {

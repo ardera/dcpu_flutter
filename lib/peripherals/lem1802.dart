@@ -171,7 +171,7 @@ class Font extends Memory with ChangeNotifier {
   static const maxCharCode = 255;
   static const length = 256;
 
-  static const defaultMemory = [
+  static const rom = [
     0xb79e,
     0x388e,
     0x722c,
@@ -431,8 +431,8 @@ class Font extends Memory with ChangeNotifier {
   ];
 
   final glyphs = [
-    for (var i = 0; i < defaultMemory.length; i += 2)
-      Glyph(first: defaultMemory[i], second: defaultMemory[i + 1])
+    for (var i = 0; i < rom.length; i += 2)
+      Glyph(first: rom[i], second: rom[i + 1])
   ];
 
   Glyph glyphFor(int characterCode) {
@@ -473,7 +473,7 @@ class Font extends Memory with ChangeNotifier {
 class Palette extends Memory with ChangeNotifier {
   static const length = 16;
 
-  static const defaultMemory = [
+  static const rom = [
     0x0000,
     0x000a,
     0x00a0,
@@ -492,8 +492,7 @@ class Palette extends Memory with ChangeNotifier {
     0x0fff
   ];
 
-  final colors =
-      defaultMemory.map((word) => LemColor(word)).toList(growable: false);
+  final colors = rom.map((word) => LemColor(word)).toList(growable: false);
 
   @override
   bool addrValid(int address) {
@@ -532,9 +531,9 @@ class Lem1802Device extends HardwareDevice with ChangeNotifier {
 
   Timer? _blinkTimer;
   Timer? _splashTimer;
-  int? _screenMapStart;
-  int? _fontMapStart;
-  int? _paletteMapStart;
+  var _screenMapStart = 0;
+  var _fontMapStart = 0;
+  var _paletteMapStart = 0;
 
   var borderColorIndex = 0;
   var blinkOn = true;
@@ -545,14 +544,22 @@ class Lem1802Device extends HardwareDevice with ChangeNotifier {
   final font = Font();
   final palette = Palette();
 
-  void unmap(Dcpu cpu, int start, int length) {
-    cpu.memory.unmap(start, length);
-    cpu.memory.map(start, length, start, cpu.ram);
+  void unmap(Dcpu cpu, int start, int length, Memory memory) {
+    cpu.hardwareController.unmapDeviceMemory(
+      cpu: cpu,
+      start: start,
+      length: length,
+      memory: memory,
+    );
   }
 
   void map(Dcpu cpu, int start, int length, Memory memory) {
-    cpu.memory.unmap(start, length);
-    cpu.memory.map(start, length, 0, memory);
+    cpu.hardwareController.mapDeviceMemory(
+      cpu: cpu,
+      start: start,
+      length: length,
+      memory: memory,
+    );
   }
 
   void mmapScreen(Dcpu cpu) {
@@ -560,9 +567,18 @@ class Lem1802Device extends HardwareDevice with ChangeNotifier {
 
     debugPrint('MEM_MAP_SCREEN ${hexstring(b)}');
 
-    if (_screenMapStart != null && (b == 0 || _screenMapStart != b)) {
-      unmap(cpu, _screenMapStart!, Framebuffer.length);
-      _screenMapStart = null;
+    if (b == _screenMapStart) {
+      // nothing to do
+      return;
+    }
+
+    if (b == 0) {
+      cpu.hardwareController.unmapDeviceMemory(
+        cpu: cpu,
+        start: _screenMapStart,
+        length: Framebuffer.length,
+        memory: framebuffer,
+      );
 
       if (b == 0) {
         enabled = false;
@@ -572,11 +588,13 @@ class Lem1802Device extends HardwareDevice with ChangeNotifier {
         _splashTimer?.cancel();
         _splashTimer = null;
       }
-    }
-
-    if (_screenMapStart != b && b != 0) {
-      map(cpu, b, Framebuffer.length, framebuffer);
-      _screenMapStart = b;
+    } else {
+      cpu.hardwareController.mapDeviceMemory(
+        cpu: cpu,
+        start: b,
+        length: Framebuffer.length,
+        memory: framebuffer,
+      );
 
       if (enabled == false) {
         assert(_splashTimer == null);
@@ -605,6 +623,8 @@ class Lem1802Device extends HardwareDevice with ChangeNotifier {
         notifyListeners();
       }
     }
+
+    _screenMapStart = b;
   }
 
   void mmapFont(Dcpu cpu) {
@@ -612,15 +632,18 @@ class Lem1802Device extends HardwareDevice with ChangeNotifier {
 
     debugPrint('MEM_MAP_FONT ${hexstring(b)}');
 
-    if (_fontMapStart != null && (b == 0 || _fontMapStart != b)) {
-      unmap(cpu, _fontMapStart!, Font.length);
-      _fontMapStart = null;
+    if (b == _fontMapStart) {
+      // nothing to do
+      return;
     }
 
-    if (_fontMapStart != b) {
+    if (b == 0) {
+      unmap(cpu, _fontMapStart, Font.length, font);
+    } else {
       map(cpu, b, Font.length, font);
-      _fontMapStart = b;
     }
+
+    _fontMapStart = b;
   }
 
   void mmapPalette(Dcpu cpu) {
@@ -628,21 +651,30 @@ class Lem1802Device extends HardwareDevice with ChangeNotifier {
 
     debugPrint('MEM_MAP_PALETTE ${hexstring(b)}');
 
-    if (_paletteMapStart != null && (b == 0 || _paletteMapStart != b)) {
-      unmap(cpu, _paletteMapStart!, Palette.length);
-      _paletteMapStart = null;
+    if (b == _paletteMapStart) {
+      // nothing to do
+      return;
     }
 
-    if (_paletteMapStart != b) {
+    if (b == 0) {
+      unmap(cpu, _paletteMapStart, Palette.length, palette);
+    } else {
       map(cpu, b, Palette.length, palette);
-      _paletteMapStart = b;
     }
+
+    _paletteMapStart = b;
   }
 
   void setBorderColor(Dcpu cpu) {
     final b = cpu.regs.b & 0xF;
 
     debugPrint('SET_BORDER_COLOR ${hexstring(b)}');
+
+    if (b == borderColorIndex) {
+      // nothing to do
+      return;
+    }
+
     borderColorIndex = b;
     notifyListeners();
   }
@@ -651,12 +683,28 @@ class Lem1802Device extends HardwareDevice with ChangeNotifier {
     final b = cpu.regs.b;
 
     debugPrint('MEM_DUMP_FONT ${hexstring(b)}');
+
+    for (final entry in Font.rom.asMap().entries) {
+      final offset = entry.key;
+      final word = entry.value;
+      cpu.memory.write(add16bit(b, offset), word);
+    }
+
+    cpu.elapseCycles(256);
   }
 
   void memdumpPalette(Dcpu cpu) {
     final b = cpu.regs.b;
 
     debugPrint('MEM_DUMP_PALETTE ${hexstring(b)}');
+
+    for (final entry in Palette.rom.asMap().entries) {
+      final offset = entry.key;
+      final word = entry.value;
+      cpu.memory.write(add16bit(b, offset), word);
+    }
+
+    cpu.elapseCycles(16);
   }
 
   @override

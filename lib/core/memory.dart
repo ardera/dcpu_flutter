@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dcpu_flutter/core/math.dart';
-import 'package:flutter/material.dart';
 
 abstract class Memory {
   bool addrValid(int address);
@@ -308,7 +307,12 @@ class RAMAccessRecorder extends MemoryOld {
 class RAM extends Memory {
   final memory = Uint16List(65536);
 
-  int loadFile(File file, [int offset = 0, int? length]) {
+  int loadFile(
+    File file, {
+    int offset = 0,
+    int? length,
+    Endian endian = Endian.little,
+  }) {
     final bytes = file.readAsBytesSync();
     assert(bytes.length.isEven);
 
@@ -318,7 +322,11 @@ class RAM extends Memory {
       final first = bytes[byteIndex];
       final second = bytes[byteIndex + 1];
 
-      memory[offset + wordIndex] = first | (second << 8);
+      if (endian == Endian.little) {
+        memory[offset + wordIndex] = first | (second << 8);
+      } else if (endian == Endian.big) {
+        memory[offset + wordIndex] = (first << 8) | second;
+      }
     }
 
     return bytes.length ~/ 2;
