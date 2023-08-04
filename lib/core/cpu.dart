@@ -281,15 +281,24 @@ class Dcpu {
     return Instruction.decode(readWord).disassemble();
   }
 
+  int loadBytes(
+    Iterable<int> bytes, {
+    int offset = 0,
+  }) {
+    return ram.loadBytes(
+      bytes,
+      offset: offset,
+      endian: compatibilityFlags.fileLoadEndian,
+    );
+  }
+
   int loadFile(
     File file, {
     int offset = 0,
-    int? length,
   }) {
     return ram.loadFile(
       file,
       offset: offset,
-      length: length,
       endian: compatibilityFlags.fileLoadEndian,
     );
   }

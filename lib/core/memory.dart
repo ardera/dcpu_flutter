@@ -304,32 +304,62 @@ class RAMAccessRecorder extends MemoryOld {
   }
 }
 
+extension Pairs<T> on Iterable<T> {
+  Iterable<(T, T?)> get pairs sync* {
+    if (length < 1) throw RangeError.range(length, 1, null, 'length');
+
+    var iterator = this.iterator;
+    while (iterator.moveNext()) {
+      final first = iterator.current;
+
+      if (iterator.moveNext()) {
+        final second = iterator.current;
+
+        yield (first, second);
+      } else {
+        yield (first, null);
+      }
+    }
+  }
+}
+
 class RAM extends Memory {
   final memory = Uint16List(65536);
+
+  int loadBytes(
+    Iterable<int> bytes, {
+    int offset = 0,
+    Endian endian = Endian.little,
+  }) {
+    final words = bytes.pairs.map((pair) {
+      var (first, second) = pair;
+      second ??= 0;
+
+      return switch (endian) {
+        Endian.little => first | (second << 8),
+        Endian.big => (first << 8) | second,
+        _ => throw UnsupportedError('Unsupported endianess: $endian'),
+      };
+    });
+
+    memory.setAll(0, words);
+
+    return words.length;
+  }
 
   int loadFile(
     File file, {
     int offset = 0,
-    int? length,
     Endian endian = Endian.little,
   }) {
     final bytes = file.readAsBytesSync();
     assert(bytes.length.isEven);
 
-    for (var wordIndex = 0; wordIndex < bytes.length ~/ 2; wordIndex++) {
-      final byteIndex = wordIndex * 2;
-
-      final first = bytes[byteIndex];
-      final second = bytes[byteIndex + 1];
-
-      if (endian == Endian.little) {
-        memory[offset + wordIndex] = first | (second << 8);
-      } else if (endian == Endian.big) {
-        memory[offset + wordIndex] = (first << 8) | second;
-      }
-    }
-
-    return bytes.length ~/ 2;
+    return loadBytes(
+      bytes,
+      offset: offset,
+      endian: endian,
+    );
   }
 
   @override
