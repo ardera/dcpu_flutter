@@ -188,17 +188,11 @@ class _MyHomePageState extends State<MyHomePage> {
       memoryBehaviour: DeviceMemoryBehaviour.syncInOut,
     ),
     File? file,
-  }) {
+    String? assetKey,
+  }) async {
     if (timer != null) pause();
 
     dcpu = Dcpu(compatibilityFlags: flags);
-
-    dcpu.loadFile(
-      //File(r'C:\Users\hanne\Desktop\DCPU-emulator by MrSmith33 v0.2\clock.bin'),
-      file ??
-          File(
-              r'C:\Users\hanne\Desktop\DCPU-emulator by MrSmith33 v0.2\hwtest2.bin'),
-    );
 
     dcpu.hardwareController.addDevice(Lem1802Device());
     dcpu.hardwareController.addDevice(GenericClock());
@@ -210,6 +204,25 @@ class _MyHomePageState extends State<MyHomePage> {
     );
 
     fetchStats();
+
+    if (file != null) {
+      dcpu.loadFile(file);
+    } else if (assetKey != null) {
+      final data = await DefaultAssetBundle.of(context).load(assetKey);
+
+      final bytes =
+          data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+
+      dcpu.loadBytes(bytes);
+    } else {
+      final data = await DefaultAssetBundle.of(context)
+          .load('assets/binaries/clock.bin');
+
+      final bytes =
+          data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+
+      dcpu.loadBytes(bytes);
+    }
   }
 
   void loadFile() async {
