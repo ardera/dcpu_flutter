@@ -445,7 +445,8 @@ class _MyHomePageState extends State<MyHomePage> {
                         return KeyEventResult.handled;
                       }
 
-                      final keyboard = dcpu.hardwareController.findKeyboard();
+                      final keyboard =
+                          dcpu.hardwareController.findDevice<GenericKeyboard>();
 
                       if (keyboard != null) {
                         debugPrint('onKeyEvent: $event');

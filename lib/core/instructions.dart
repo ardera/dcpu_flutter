@@ -1,7 +1,7 @@
 import 'package:dcpu_flutter/core/cpu.dart';
 import 'package:dcpu_flutter/core/math.dart';
 
-abstract class Instruction {
+sealed class Instruction {
   const Instruction({required this.op});
 
   static Instruction decode(int Function() readWord) {
@@ -13,12 +13,12 @@ abstract class Instruction {
 
     if (opcode == 0) {
       // special opcode
-      final op = Op.decodeSpecial(bEncoded);
+      final op = SpecialOp.decode(bEncoded);
       final a = Arg.decode(aEncoded, readWord);
       return SpecialInstruction(op: op, a: a);
     } else {
       // basic opcode
-      final op = Op.decodeBasic(opcode);
+      final op = BasicOp.decode(opcode);
       final a = Arg.decode(aEncoded, readWord);
       final b = Arg.decode(bEncoded, readWord);
       return BasicInstruction(op: op, a: a, b: b);
@@ -33,6 +33,8 @@ abstract class Instruction {
   void perform(Dcpu state);
 
   String disassemble();
+
+  List<int> encode();
 }
 
 class BasicInstruction implements Instruction {
@@ -59,6 +61,28 @@ class BasicInstruction implements Instruction {
   String disassemble() {
     return '${op.mnemonic} ${b.disassemble(false)}, ${a.disassemble(true)}';
   }
+
+  @override
+  List<int> encode() {
+    final opcode = op.opcode;
+    final (bEncoded, bWord) = b.encode();
+    final (aEncoded, aWord) = a.encode();
+
+    assert(opcode & ~0x1f == 0);
+    assert(bEncoded & ~0x1f == 0);
+    assert(aEncoded & ~0x3f == 0);
+
+    var word = 0;
+    word |= opcode;
+    word |= (bEncoded << 5);
+    word |= (aEncoded << 10);
+
+    return [
+      word,
+      if (aWord != null) aWord,
+      if (bWord != null) bWord,
+    ];
+  }
 }
 
 class SpecialInstruction implements Instruction {
@@ -83,6 +107,24 @@ class SpecialInstruction implements Instruction {
   @override
   String disassemble() {
     return '${op.mnemonic} ${a.disassemble(true)}';
+  }
+
+  @override
+  List<int> encode() {
+    final opcode = op.opcode;
+    final (aEncoded, aWord) = a.encode();
+
+    assert(opcode & ~0x1f == 0);
+    assert(aEncoded & ~0x3f == 0);
+
+    var word = 0;
+    word |= (opcode << 5);
+    word |= (aEncoded << 10);
+
+    return [
+      word,
+      if (aWord != null) aWord,
+    ];
   }
 }
 
@@ -124,94 +166,10 @@ class IllegalArgumentEncodingException extends DecoderException {
   }
 }
 
-abstract class Op {
+sealed class Op {
   String get mnemonic;
 
   const Op();
-
-  static BasicOp decodeBasic(int opcode) {
-    if (SetOp.matches(opcode, false)) {
-      return const SetOp();
-    } else if (AddOp.matches(opcode, false)) {
-      return const AddOp();
-    } else if (SubOp.matches(opcode, false)) {
-      return const SubOp();
-    } else if (MulOp.matches(opcode, false)) {
-      return const MulOp();
-    } else if (MliOp.matches(opcode, false)) {
-      return const MliOp();
-    } else if (DivOp.matches(opcode, false)) {
-      return const DivOp();
-    } else if (DviOp.matches(opcode, false)) {
-      return const DviOp();
-    } else if (ModOp.matches(opcode, false)) {
-      return const ModOp();
-    } else if (MdiOp.matches(opcode, false)) {
-      return const MdiOp();
-    } else if (AndOp.matches(opcode, false)) {
-      return const AndOp();
-    } else if (BorOp.matches(opcode, false)) {
-      return const BorOp();
-    } else if (XorOp.matches(opcode, false)) {
-      return const XorOp();
-    } else if (ShrOp.matches(opcode, false)) {
-      return const ShrOp();
-    } else if (AsrOp.matches(opcode, false)) {
-      return const AsrOp();
-    } else if (ShlOp.matches(opcode, false)) {
-      return const ShlOp();
-    } else if (IfbOp.matches(opcode, false)) {
-      return const IfbOp();
-    } else if (IfcOp.matches(opcode, false)) {
-      return const IfcOp();
-    } else if (IfeOp.matches(opcode, false)) {
-      return const IfeOp();
-    } else if (IfnOp.matches(opcode, false)) {
-      return const IfnOp();
-    } else if (IfgOp.matches(opcode, false)) {
-      return const IfgOp();
-    } else if (IfaOp.matches(opcode, false)) {
-      return const IfaOp();
-    } else if (IflOp.matches(opcode, false)) {
-      return const IflOp();
-    } else if (IfuOp.matches(opcode, false)) {
-      return const IfuOp();
-    } else if (AdxOp.matches(opcode, false)) {
-      return const AdxOp();
-    } else if (SbxOp.matches(opcode, false)) {
-      return const SbxOp();
-    } else if (StiOp.matches(opcode, false)) {
-      return const StiOp();
-    } else if (StdOp.matches(opcode, false)) {
-      return const StdOp();
-    } else {
-      throw IllegalBasicOpcodeException(opcode);
-    }
-  }
-
-  static SpecialOp decodeSpecial(int opcode) {
-    if (JsrOp.matches(opcode, true)) {
-      return const JsrOp();
-    } else if (IntOp.matches(opcode, true)) {
-      return const IntOp();
-    } else if (IagOp.matches(opcode, true)) {
-      return const IagOp();
-    } else if (IasOp.matches(opcode, true)) {
-      return const IasOp();
-    } else if (RfiOp.matches(opcode, true)) {
-      return const RfiOp();
-    } else if (IaqOp.matches(opcode, true)) {
-      return const IaqOp();
-    } else if (HwnOp.matches(opcode, true)) {
-      return const HwnOp();
-    } else if (HwqOp.matches(opcode, true)) {
-      return const HwqOp();
-    } else if (HwiOp.matches(opcode, true)) {
-      return const HwiOp();
-    } else {
-      throw IllegalSpecialOpcodeException(opcode);
-    }
-  }
 
   int get cycles;
 
@@ -300,12 +258,58 @@ abstract class Op {
     b.write(state, result.b);
     state.regs.ex = result.ex;
   }
+
+  static const values = [
+    ...BasicOp.values,
+    ...SpecialOp.values,
+  ];
 }
 
 abstract class BasicOp extends Op {
   const BasicOp();
 
+  static BasicOp decode(int opcode) {
+    return values.singleWhere(
+      (op) => op.matches(opcode),
+      orElse: () => throw throw IllegalBasicOpcodeException(opcode),
+    );
+  }
+
   void perform(Dcpu state, Arg a, Arg b);
+
+  bool matches(int opcode) => opcode == this.opcode;
+
+  int get opcode;
+
+  static const values = [
+    SetOp(),
+    AddOp(),
+    SubOp(),
+    MulOp(),
+    MliOp(),
+    DivOp(),
+    DviOp(),
+    ModOp(),
+    MdiOp(),
+    AndOp(),
+    BorOp(),
+    XorOp(),
+    ShrOp(),
+    AsrOp(),
+    ShlOp(),
+    IfbOp(),
+    IfcOp(),
+    IfeOp(),
+    IfnOp(),
+    IfgOp(),
+    IfaOp(),
+    IflOp(),
+    IfuOp(),
+    AdxOp(),
+    SbxOp(),
+    StiOp(),
+    StdOp(),
+  ];
 }
 
 abstract class BranchingOp extends BasicOp {
@@ -318,12 +322,34 @@ abstract class BranchingOp extends BasicOp {
 abstract class SpecialOp extends Op {
   const SpecialOp();
 
+  static SpecialOp decode(int opcode) {
+    return values.singleWhere(
+      (op) => op.matches(opcode),
+      orElse: () => throw throw IllegalBasicOpcodeException(opcode),
+    );
+  }
+
   void perform(Dcpu state, Arg a);
+
+  bool matches(int opcode) => opcode == this.opcode;
+
+  int get opcode;
+
+  static const values = [
+    JsrOp(),
+    IntOp(),
+    IagOp(),
+    IasOp(),
+    RfiOp(),
+    IaqOp(),
+    HwnOp(),
+    HwqOp(),
+    HwiOp(),
+    HltOp(),
+  ];
 }
 
 class SetOp extends BasicOp {
-  static bool matches(int opcode, bool special) => !special && opcode == 0x01;
-
   const SetOp();
 
   @override
@@ -336,11 +362,12 @@ class SetOp extends BasicOp {
 
   @override
   int get cycles => 1;
+
+  @override
+  final opcode = 0x01;
 }
 
 class AddOp extends BasicOp {
-  static bool matches(int opcode, bool special) => !special && opcode == 0x02;
-
   const AddOp();
 
   @override
@@ -363,11 +390,12 @@ class AddOp extends BasicOp {
 
   @override
   int get cycles => 2;
+
+  @override
+  final opcode = 0x02;
 }
 
 class SubOp extends BasicOp {
-  static bool matches(int opcode, bool special) => !special && opcode == 0x03;
-
   const SubOp();
 
   @override
@@ -390,11 +418,12 @@ class SubOp extends BasicOp {
 
   @override
   int get cycles => 2;
+
+  @override
+  final opcode = 0x03;
 }
 
 class MulOp extends BasicOp {
-  static bool matches(int opcode, bool special) => !special && opcode == 0x04;
-
   const MulOp();
 
   @override
@@ -418,11 +447,12 @@ class MulOp extends BasicOp {
 
   @override
   int get cycles => 2;
+
+  @override
+  final opcode = 0x04;
 }
 
 class MliOp extends BasicOp {
-  static bool matches(int opcode, bool special) => !special && opcode == 0x05;
-
   const MliOp();
 
   @override
@@ -450,11 +480,12 @@ class MliOp extends BasicOp {
 
   @override
   int get cycles => 2;
+
+  @override
+  final opcode = 0x05;
 }
 
 class DivOp extends BasicOp {
-  static bool matches(int opcode, bool special) => !special && opcode == 0x06;
-
   const DivOp();
 
   @override
@@ -481,11 +512,12 @@ class DivOp extends BasicOp {
 
   @override
   int get cycles => 3;
+
+  @override
+  final opcode = 0x06;
 }
 
 class DviOp extends BasicOp {
-  static bool matches(int opcode, bool special) => !special && opcode == 0x07;
-
   const DviOp();
 
   @override
@@ -515,11 +547,12 @@ class DviOp extends BasicOp {
 
   @override
   int get cycles => 3;
+
+  @override
+  final opcode = 0x07;
 }
 
 class ModOp extends BasicOp {
-  static bool matches(int opcode, bool special) => !special && opcode == 0x08;
-
   const ModOp();
 
   @override
@@ -543,11 +576,12 @@ class ModOp extends BasicOp {
 
   @override
   int get cycles => 3;
+
+  @override
+  final opcode = 0x08;
 }
 
 class MdiOp extends BasicOp {
-  static bool matches(int opcode, bool special) => !special && opcode == 0x09;
-
   const MdiOp();
 
   @override
@@ -574,11 +608,12 @@ class MdiOp extends BasicOp {
 
   @override
   int get cycles => 3;
+
+  @override
+  final opcode = 0x09;
 }
 
 class AndOp extends BasicOp {
-  static bool matches(int opcode, bool special) => !special && opcode == 0x0a;
-
   const AndOp();
 
   @override
@@ -598,11 +633,12 @@ class AndOp extends BasicOp {
 
   @override
   int get cycles => 1;
+
+  @override
+  final opcode = 0x0a;
 }
 
 class BorOp extends BasicOp {
-  static bool matches(int opcode, bool special) => !special && opcode == 0x0b;
-
   const BorOp();
 
   @override
@@ -622,11 +658,12 @@ class BorOp extends BasicOp {
 
   @override
   int get cycles => 1;
+
+  @override
+  final opcode = 0x0b;
 }
 
 class XorOp extends BasicOp {
-  static bool matches(int opcode, bool special) => !special && opcode == 0x0c;
-
   const XorOp();
 
   @override
@@ -646,11 +683,12 @@ class XorOp extends BasicOp {
 
   @override
   int get cycles => 1;
+
+  @override
+  final opcode = 0x0c;
 }
 
 class ShrOp extends BasicOp {
-  static bool matches(int opcode, bool special) => !special && opcode == 0x0d;
-
   const ShrOp();
 
   @override
@@ -673,11 +711,12 @@ class ShrOp extends BasicOp {
 
   @override
   int get cycles => 1;
+
+  @override
+  final opcode = 0x0d;
 }
 
 class AsrOp extends BasicOp {
-  static bool matches(int opcode, bool special) => !special && opcode == 0x0e;
-
   const AsrOp();
 
   @override
@@ -702,11 +741,12 @@ class AsrOp extends BasicOp {
 
   @override
   int get cycles => 1;
+
+  @override
+  final opcode = 0x0e;
 }
 
 class ShlOp extends BasicOp {
-  static bool matches(int opcode, bool special) => !special && opcode == 0x0f;
-
   const ShlOp();
 
   @override
@@ -729,11 +769,12 @@ class ShlOp extends BasicOp {
 
   @override
   int get cycles => 1;
+
+  @override
+  final opcode = 0x0f;
 }
 
 class IfbOp extends BranchingOp {
-  static bool matches(int opcode, bool special) => !special && opcode == 0x10;
-
   const IfbOp();
 
   @override
@@ -753,11 +794,12 @@ class IfbOp extends BranchingOp {
 
   @override
   int get cycles => 2;
+
+  @override
+  final opcode = 0x10;
 }
 
 class IfcOp extends BranchingOp {
-  static bool matches(int opcode, bool special) => !special && opcode == 0x11;
-
   const IfcOp();
 
   @override
@@ -777,12 +819,13 @@ class IfcOp extends BranchingOp {
 
   @override
   int get cycles => 2;
+
+  @override
+  final opcode = 0x11;
 }
 
 class IfeOp extends BranchingOp {
   const IfeOp();
-
-  static bool matches(int opcode, bool special) => !special && opcode == 0x12;
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
@@ -801,12 +844,13 @@ class IfeOp extends BranchingOp {
 
   @override
   int get cycles => 2;
+
+  @override
+  final opcode = 0x12;
 }
 
 class IfnOp extends BranchingOp {
   const IfnOp();
-
-  static bool matches(int opcode, bool special) => !special && opcode == 0x13;
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
@@ -825,12 +869,13 @@ class IfnOp extends BranchingOp {
 
   @override
   int get cycles => 2;
+
+  @override
+  final opcode = 0x13;
 }
 
 class IfgOp extends BranchingOp {
   const IfgOp();
-
-  static bool matches(int opcode, bool special) => !special && opcode == 0x14;
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
@@ -849,12 +894,13 @@ class IfgOp extends BranchingOp {
 
   @override
   int get cycles => 2;
+
+  @override
+  final opcode = 0x14;
 }
 
 class IfaOp extends BranchingOp {
   const IfaOp();
-
-  static bool matches(int opcode, bool special) => !special && opcode == 0x15;
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
@@ -876,12 +922,13 @@ class IfaOp extends BranchingOp {
 
   @override
   int get cycles => 2;
+
+  @override
+  final opcode = 0x15;
 }
 
 class IflOp extends BranchingOp {
   const IflOp();
-
-  static bool matches(int opcode, bool special) => !special && opcode == 0x16;
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
@@ -900,12 +947,13 @@ class IflOp extends BranchingOp {
 
   @override
   int get cycles => 2;
+
+  @override
+  final opcode = 0x16;
 }
 
 class IfuOp extends BranchingOp {
   const IfuOp();
-
-  static bool matches(int opcode, bool special) => !special && opcode == 0x17;
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
@@ -927,12 +975,13 @@ class IfuOp extends BranchingOp {
 
   @override
   int get cycles => 2;
+
+  @override
+  final opcode = 0x17;
 }
 
 class AdxOp extends BasicOp {
   const AdxOp();
-
-  static bool matches(int opcode, bool special) => !special && opcode == 0x1a;
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
@@ -955,12 +1004,13 @@ class AdxOp extends BasicOp {
 
   @override
   int get cycles => 3;
+
+  @override
+  final opcode = 0x1a;
 }
 
 class SbxOp extends BasicOp {
   const SbxOp();
-
-  static bool matches(int opcode, bool special) => !special && opcode == 0x1b;
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
@@ -983,12 +1033,13 @@ class SbxOp extends BasicOp {
 
   @override
   int get cycles => 3;
+
+  @override
+  final opcode = 0x1b;
 }
 
 class StiOp extends BasicOp {
   const StiOp();
-
-  static bool matches(int opcode, bool special) => !special && opcode == 0x1e;
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
@@ -1002,12 +1053,13 @@ class StiOp extends BasicOp {
 
   @override
   int get cycles => 2;
+
+  @override
+  final opcode = 0x1e;
 }
 
 class StdOp extends BasicOp {
   const StdOp();
-
-  static bool matches(int opcode, bool special) => !special && opcode == 0x1f;
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
@@ -1021,12 +1073,13 @@ class StdOp extends BasicOp {
 
   @override
   int get cycles => 2;
+
+  @override
+  final opcode = 0x1f;
 }
 
 class JsrOp extends SpecialOp {
   const JsrOp();
-
-  static bool matches(int opcode, bool special) => special && opcode == 0x01;
 
   @override
   void perform(Dcpu state, Arg a) {
@@ -1039,12 +1092,13 @@ class JsrOp extends SpecialOp {
 
   @override
   int get cycles => 3;
+
+  @override
+  final opcode = 0x01;
 }
 
 class IntOp extends SpecialOp {
   const IntOp();
-
-  static bool matches(int opcode, bool special) => special && opcode == 0x08;
 
   @override
   void perform(Dcpu state, Arg a) {
@@ -1058,12 +1112,13 @@ class IntOp extends SpecialOp {
 
   @override
   int get cycles => 4;
+
+  @override
+  final opcode = 0x08;
 }
 
 class IagOp extends SpecialOp {
   const IagOp();
-
-  static bool matches(int opcode, bool special) => special && opcode == 0x09;
 
   @override
   void perform(Dcpu state, Arg a) {
@@ -1075,12 +1130,13 @@ class IagOp extends SpecialOp {
 
   @override
   int get cycles => 1;
+
+  @override
+  final opcode = 0x09;
 }
 
 class IasOp extends SpecialOp {
   const IasOp();
-
-  static bool matches(int opcode, bool special) => special && opcode == 0x0a;
 
   @override
   void perform(Dcpu state, Arg a) {
@@ -1100,12 +1156,13 @@ class IasOp extends SpecialOp {
 
   @override
   int get cycles => 1;
+
+  @override
+  final opcode = 0x0a;
 }
 
 class RfiOp extends SpecialOp {
   const RfiOp();
-
-  static bool matches(int opcode, bool special) => special && opcode == 0x0b;
 
   @override
   void perform(Dcpu state, Arg a) {
@@ -1119,12 +1176,13 @@ class RfiOp extends SpecialOp {
 
   @override
   int get cycles => 3;
+
+  @override
+  final opcode = 0x0b;
 }
 
 class IaqOp extends SpecialOp {
   const IaqOp();
-
-  static bool matches(int opcode, bool special) => special && opcode == 0x0c;
 
   @override
   void perform(Dcpu state, Arg a) {
@@ -1142,12 +1200,13 @@ class IaqOp extends SpecialOp {
 
   @override
   int get cycles => 2;
+
+  @override
+  final opcode = 0x0c;
 }
 
 class HwnOp extends SpecialOp {
   const HwnOp();
-
-  static bool matches(int opcode, bool special) => special && opcode == 0x10;
 
   @override
   void perform(Dcpu state, Arg a) {
@@ -1159,12 +1218,13 @@ class HwnOp extends SpecialOp {
 
   @override
   int get cycles => 2;
+
+  @override
+  final opcode = 0x10;
 }
 
 class HwqOp extends SpecialOp {
   const HwqOp();
-
-  static bool matches(int opcode, bool special) => special && opcode == 0x11;
 
   @override
   void perform(Dcpu state, Arg a) {
@@ -1192,12 +1252,13 @@ class HwqOp extends SpecialOp {
 
   @override
   int get cycles => 4;
+
+  @override
+  final opcode = 0x11;
 }
 
 class HwiOp extends SpecialOp {
   const HwiOp();
-
-  static bool matches(int opcode, bool special) => special && opcode == 0x12;
 
   @override
   void perform(Dcpu state, Arg a) {
@@ -1213,36 +1274,51 @@ class HwiOp extends SpecialOp {
 
   @override
   int get cycles => 4;
+
+  @override
+  final opcode = 0x12;
 }
 
-abstract class Arg {
-  const Arg(this.encoded);
+class HltOp extends SpecialOp {
+  const HltOp();
+
+  @override
+  int get cycles => 1;
+
+  @override
+  String get mnemonic => 'HLT';
+
+  @override
+  int get opcode => 0x15;
+
+  @override
+  void perform(Dcpu state, Arg a) {
+    /// TODO: Implement
+  }
+}
+
+sealed class Arg {
+  const Arg();
 
   static Arg decode(int encoded, int Function() readNextWord) {
     if (DirectRegisterArg.matches(encoded)) {
-      return DirectRegisterArg(encoded);
+      return DirectRegisterArg.fromEncoded(encoded);
     } else if (IndirectRegisterArg.matches(encoded)) {
-      return IndirectRegisterArg(encoded);
-    } else if (IndirectImmediateRegisterArg.matches(encoded)) {
-      return IndirectImmediateRegisterArg(encoded, readNextWord());
+      return IndirectRegisterArg.fromEncoded(encoded);
+    } else if (IndirectRegisterImmediateArg.matches(encoded)) {
+      return IndirectRegisterImmediateArg.fromEncoded(encoded, readNextWord());
     } else if (PushPopArg.matches(encoded)) {
       return const PushPopArg();
-    } else if (PeekArg.matches(encoded)) {
-      return const PeekArg();
-    } else if (SpecialRegisterArg.matches(encoded)) {
-      return SpecialRegisterArg(encoded);
     } else if (IndirectImmediateArg.matches(encoded)) {
-      return IndirectImmediateArg(encoded, readNextWord());
+      return IndirectImmediateArg(readNextWord());
     } else if (ImmediateArg.matches(encoded)) {
-      return ImmediateArg(encoded, readNextWord());
+      return ImmediateArg(readNextWord());
     } else if (SmallImmediateArg.matches(encoded)) {
-      return SmallImmediateArg(encoded);
+      return SmallImmediateArg.fromEncoded(encoded);
     } else {
       throw IllegalArgumentEncodingException(encoded);
     }
   }
-
-  final int encoded;
 
   int get decodeCycleCount => 0;
 
@@ -1250,143 +1326,246 @@ abstract class Arg {
   void write(Dcpu state, int value);
 
   String disassemble(bool isA);
+
+  (int, int?) encode();
 }
 
 class DirectRegisterArg extends Arg {
-  const DirectRegisterArg.fromEncoded(super.encoded)
-      : assert(0 <= encoded && encoded <= 0x07),
-        registerIndex = encoded,
-        super();
+  const DirectRegisterArg(this.register);
 
-  factory DirectRegisterArg(int encoded) {
-    assert(0 <= encoded && encoded <= 0x07);
-    switch (encoded) {
-      case 0:
-        return const DirectRegisterArg.fromEncoded(0);
-      case 1:
-        return const DirectRegisterArg.fromEncoded(1);
-      case 2:
-        return const DirectRegisterArg.fromEncoded(2);
-      case 3:
-        return const DirectRegisterArg.fromEncoded(3);
-      case 4:
-        return const DirectRegisterArg.fromEncoded(4);
-      case 5:
-        return const DirectRegisterArg.fromEncoded(5);
-      case 6:
-        return const DirectRegisterArg.fromEncoded(6);
-      case 7:
-        return const DirectRegisterArg.fromEncoded(7);
-      default:
-        throw StateError('Unreachable');
-    }
+  factory DirectRegisterArg.fromEncoded(int encoded) {
+    return switch (encoded) {
+      0 => const DirectRegisterArg(Register.a),
+      1 => const DirectRegisterArg(Register.b),
+      2 => const DirectRegisterArg(Register.c),
+      3 => const DirectRegisterArg(Register.x),
+      4 => const DirectRegisterArg(Register.y),
+      5 => const DirectRegisterArg(Register.z),
+      6 => const DirectRegisterArg(Register.i),
+      7 => const DirectRegisterArg(Register.j),
+      0x1b => const DirectRegisterArg(Register.sp),
+      0x1c => const DirectRegisterArg(Register.pc),
+      0x1d => const DirectRegisterArg(Register.ex),
+      _ => throw ArgumentError('Invalid register encoding: $encoded'),
+    };
   }
 
-  final int registerIndex;
+  static const allowedRegisters = {
+    Register.a,
+    Register.b,
+    Register.c,
+    Register.x,
+    Register.y,
+    Register.z,
+    Register.i,
+    Register.j,
+    Register.sp,
+    Register.pc,
+    Register.ex,
+  };
 
-  static bool matches(int encoded) => 0 <= encoded && encoded <= 0x07;
+  final Register register;
+
+  static bool matches(int encoded) =>
+      (0 <= encoded && encoded <= 0x07) ||
+      encoded == 0x1b ||
+      encoded == 0x1c ||
+      encoded == 0x1d;
 
   @override
   int read(Dcpu state) {
-    return state.regs.readByIndex(encoded);
+    return state.regs.read(register);
   }
 
   @override
   void write(Dcpu state, int value) {
-    return state.regs.writeByIndex(encoded, value);
+    return state.regs.write(register, value);
   }
 
   @override
   String disassemble(bool isA) {
-    return RegisterFile.registerName(registerIndex);
+    return register.name;
+  }
+
+  @override
+  (int, int?) encode() {
+    return (
+      switch (register) {
+        Register.a => 0,
+        Register.b => 1,
+        Register.c => 2,
+        Register.x => 3,
+        Register.y => 4,
+        Register.z => 5,
+        Register.i => 6,
+        Register.j => 7,
+        Register.sp => 0x1b,
+        Register.pc => 0x1c,
+        Register.ex => 0x1d,
+        _ => throw StateError('Invalid register: $register'),
+      },
+      null
+    );
   }
 }
 
 class IndirectRegisterArg extends Arg {
-  const IndirectRegisterArg.fromEncoded(super.encoded)
-      : assert(0x08 <= encoded && encoded <= 0x0f),
-        registerIndex = encoded - 0x08,
-        super();
+  const IndirectRegisterArg(this.register) : super();
 
-  factory IndirectRegisterArg(int encoded) {
-    assert(0x08 <= encoded && encoded <= 0x0f);
-    switch (encoded) {
-      case 0x08:
-        return const IndirectRegisterArg.fromEncoded(0x08);
-      case 0x09:
-        return const IndirectRegisterArg.fromEncoded(0x09);
-      case 0x0a:
-        return const IndirectRegisterArg.fromEncoded(0x0a);
-      case 0x0b:
-        return const IndirectRegisterArg.fromEncoded(0x0b);
-      case 0x0c:
-        return const IndirectRegisterArg.fromEncoded(0x0c);
-      case 0x0d:
-        return const IndirectRegisterArg.fromEncoded(0x0d);
-      case 0x0e:
-        return const IndirectRegisterArg.fromEncoded(0x0e);
-      case 0x0f:
-        return const IndirectRegisterArg.fromEncoded(0x0f);
-      default:
-        throw StateError('');
-    }
+  factory IndirectRegisterArg.fromEncoded(int encoded) {
+    return switch (encoded) {
+      0x08 => const IndirectRegisterArg(Register.a),
+      0x09 => const IndirectRegisterArg(Register.b),
+      0x0a => const IndirectRegisterArg(Register.c),
+      0x0b => const IndirectRegisterArg(Register.x),
+      0x0c => const IndirectRegisterArg(Register.y),
+      0x0d => const IndirectRegisterArg(Register.z),
+      0x0e => const IndirectRegisterArg(Register.i),
+      0x0f => const IndirectRegisterArg(Register.j),
+      0x19 => const IndirectRegisterArg(Register.sp),
+      _ => throw ArgumentError('Invalid indirect register encoding: $encoded'),
+    };
   }
 
-  final int registerIndex;
+  final Register register;
 
-  static bool matches(int encoded) => 0x08 <= encoded && encoded <= 0x0f;
+  static const allowedRegisters = {
+    Register.a,
+    Register.b,
+    Register.c,
+    Register.x,
+    Register.y,
+    Register.z,
+    Register.i,
+    Register.j,
+    Register.sp,
+  };
+
+  static bool matches(int encoded) =>
+      (0x08 <= encoded && encoded <= 0x0f) || encoded == 0x19;
 
   @override
   int read(Dcpu state) {
-    return state.memory.read(state.regs.readByIndex(registerIndex));
+    return state.memory.read(state.regs.read(register));
   }
 
   @override
   void write(Dcpu state, int value) {
-    return state.memory.write(state.regs.readByIndex(registerIndex), value);
+    return state.memory.write(state.regs.read(register), value);
   }
 
   @override
   String disassemble(bool isA) {
-    return '[${RegisterFile.registerName(registerIndex)}]';
+    if (register == Register.sp) {
+      return 'PEEK';
+    } else {
+      return '[$register]';
+    }
+  }
+
+  @override
+  (int, int?) encode() {
+    return (
+      switch (register) {
+        Register.a => 0x08,
+        Register.b => 0x09,
+        Register.c => 0x0a,
+        Register.x => 0x0b,
+        Register.y => 0x0c,
+        Register.z => 0x0d,
+        Register.i => 0x0e,
+        Register.j => 0x0f,
+        Register.sp => 0x19,
+        _ => throw StateError('Invalid register: $register'),
+      },
+      null
+    );
   }
 }
 
-class IndirectImmediateRegisterArg extends Arg {
-  const IndirectImmediateRegisterArg(super.encoded, this.nextWord)
-      : assert(0x10 <= encoded && encoded <= 0x17),
-        registerIndex = encoded - 0x10,
-        super();
+class IndirectRegisterImmediateArg extends Arg {
+  const IndirectRegisterImmediateArg(this.register, this.immediate);
 
-  final int registerIndex;
-  final int nextWord;
+  factory IndirectRegisterImmediateArg.fromEncoded(int encoded, int nextWord) {
+    return switch (encoded) {
+      0x10 => IndirectRegisterImmediateArg(Register.a, nextWord),
+      0x11 => IndirectRegisterImmediateArg(Register.b, nextWord),
+      0x12 => IndirectRegisterImmediateArg(Register.c, nextWord),
+      0x13 => IndirectRegisterImmediateArg(Register.x, nextWord),
+      0x14 => IndirectRegisterImmediateArg(Register.y, nextWord),
+      0x15 => IndirectRegisterImmediateArg(Register.z, nextWord),
+      0x16 => IndirectRegisterImmediateArg(Register.i, nextWord),
+      0x17 => IndirectRegisterImmediateArg(Register.j, nextWord),
+      0x1a => IndirectRegisterImmediateArg(Register.sp, nextWord),
+      _ => throw ArgumentError(
+          'Invalid indirect offset register encoding: $encoded'),
+    };
+  }
 
-  static bool matches(int encoded) => 0x10 <= encoded && encoded <= 0x17;
+  final Register register;
+  final int immediate;
+
+  static bool matches(int encoded) =>
+      (0x10 <= encoded && encoded <= 0x17) || encoded == 0x1a;
+
+  static const allowedRegisters = {
+    Register.a,
+    Register.b,
+    Register.c,
+    Register.x,
+    Register.y,
+    Register.z,
+    Register.i,
+    Register.j,
+    Register.sp,
+  };
 
   @override
   int get decodeCycleCount => 1;
 
   @override
   int read(Dcpu state) {
-    final addr = add16bit(state.regs.readByIndex(registerIndex), nextWord);
+    final addr = add16bit(state.regs.read(register), immediate);
     return state.memory.read(addr);
   }
 
   @override
   void write(Dcpu state, int value) {
-    final addr = add16bit(state.regs.readByIndex(registerIndex), nextWord);
+    final addr = add16bit(state.regs.read(register), immediate);
     return state.memory.write(addr, value);
   }
 
   @override
   String disassemble(bool isA) {
-    final registerName = RegisterFile.registerName(registerIndex);
-    return '[$registerName+$nextWord]';
+    if (register == Register.sp) {
+      return 'PICK $immediate';
+    } else {
+      return '[$register+$immediate]';
+    }
+  }
+
+  @override
+  (int, int) encode() {
+    return (
+      switch (register) {
+        Register.a => 0x10,
+        Register.b => 0x11,
+        Register.c => 0x12,
+        Register.x => 0x13,
+        Register.y => 0x14,
+        Register.z => 0x15,
+        Register.i => 0x16,
+        Register.j => 0x17,
+        Register.sp => 0x1a,
+        _ => throw StateError('Invalid register: $register'),
+      },
+      immediate
+    );
   }
 }
 
 class PushPopArg extends Arg {
-  const PushPopArg() : super(0x18);
+  const PushPopArg();
 
   static bool matches(int encoded) => encoded == 0x18;
 
@@ -1408,101 +1587,17 @@ class PushPopArg extends Arg {
       return 'PUSH';
     }
   }
-}
-
-class PeekArg extends Arg {
-  const PeekArg() : super(0x19);
-
-  static bool matches(int encoded) => encoded == 0x19;
 
   @override
-  int read(Dcpu state) {
-    return state.readPeek();
-  }
-
-  @override
-  void write(Dcpu state, int value) {
-    return state.writePeek(value);
-  }
-
-  @override
-  String disassemble(bool isA) {
-    return 'PEEK';
-  }
-}
-
-class PickArg extends Arg {
-  const PickArg(this.nextWord) : super(0x1a);
-
-  final int nextWord;
-
-  static bool matches(int encoded) => encoded == 0x1a;
-
-  @override
-  int get decodeCycleCount => 1;
-
-  @override
-  int read(Dcpu state) {
-    return state.readPeek();
-  }
-
-  @override
-  void write(Dcpu state, int value) {
-    return state.writePeek(value);
-  }
-
-  @override
-  String disassemble(bool isA) {
-    return 'PICK $nextWord';
-  }
-}
-
-class SpecialRegisterArg extends Arg {
-  const SpecialRegisterArg.fromEncoded(super.encoded)
-      : assert(0x1b <= encoded && encoded <= 0x1d),
-        registerIndex = encoded - 0x1b + 8,
-        super();
-
-  factory SpecialRegisterArg(int encoded) {
-    assert(matches(encoded));
-    switch (encoded) {
-      case 0x1b:
-        return const SpecialRegisterArg.fromEncoded(0x1b);
-      case 0x1c:
-        return const SpecialRegisterArg.fromEncoded(0x1c);
-      case 0x1d:
-        return const SpecialRegisterArg.fromEncoded(0x1d);
-      default:
-        throw StateError('Unreachable');
-    }
-  }
-
-  final int registerIndex;
-
-  static bool matches(int encoded) => 0x1b <= encoded && encoded <= 0x1d;
-
-  @override
-  int read(Dcpu state) {
-    return state.regs.readByIndex(registerIndex);
-  }
-
-  @override
-  void write(Dcpu state, int value) {
-    return state.regs.writeByIndex(registerIndex, value);
-  }
-
-  @override
-  String disassemble(bool isA) {
-    return RegisterFile.registerName(registerIndex);
+  (int, int?) encode() {
+    return (0x18, null);
   }
 }
 
 class IndirectImmediateArg extends Arg {
-  IndirectImmediateArg(super.encoded, this.nextWord)
-      : assert(matches(encoded)),
-        super();
+  const IndirectImmediateArg(this.immediate);
 
-  final int nextWord;
+  final int immediate;
 
   static bool matches(int encoded) => encoded == 0x1e;
 
@@ -1511,28 +1606,30 @@ class IndirectImmediateArg extends Arg {
 
   @override
   int read(Dcpu state) {
-    final addr = nextWord;
+    final addr = immediate;
     return state.memory.read(addr);
   }
 
   @override
   void write(Dcpu state, int value) {
-    final addr = nextWord;
-    return state.memory.write(addr, value);
+    return state.memory.write(immediate, value);
   }
 
   @override
   String disassemble(bool isA) {
-    return '[${hexstring(nextWord)}]';
+    return '[${hexstring(immediate)}]';
+  }
+
+  @override
+  (int, int) encode() {
+    return (0x1e, immediate);
   }
 }
 
 class ImmediateArg extends Arg {
-  ImmediateArg(super.encoded, this.nextWord)
-      : assert(matches(encoded)),
-        super();
+  const ImmediateArg(this.value);
 
-  final int nextWord;
+  final int value;
 
   static bool matches(int encoded) => encoded == 0x1f;
 
@@ -1541,7 +1638,7 @@ class ImmediateArg extends Arg {
 
   @override
   int read(Dcpu state) {
-    return nextWord;
+    return value;
   }
 
   @override
@@ -1551,17 +1648,30 @@ class ImmediateArg extends Arg {
 
   @override
   String disassemble(bool isA) {
-    return hexstring(nextWord);
+    return hexstring(value);
+  }
+
+  @override
+  (int, int) encode() {
+    return (0x1f, value);
   }
 }
 
 class SmallImmediateArg extends Arg {
-  SmallImmediateArg(super.encoded)
-      : assert(matches(encoded)),
-        immediate = to16bit(encoded - 0x21),
-        super();
+  const SmallImmediateArg(this.immediate);
+
+  factory SmallImmediateArg.fromEncoded(int encoded) {
+    assert(matches(encoded));
+    return SmallImmediateArg(sub16bit(encoded, 0x21));
+  }
 
   final int immediate;
+
+  static bool immediateInRange(int immediate) {
+    assert(0 <= immediate && immediate <= 0xFFFF);
+
+    return immediate <= 0x1E || immediate == 0xFFFF;
+  }
 
   static bool matches(int encoded) => 0x20 <= encoded && encoded <= 0x3f;
 
@@ -1577,6 +1687,11 @@ class SmallImmediateArg extends Arg {
 
   @override
   String disassemble(bool isA) {
-    return '${encoded - 0x21}';
+    return '${from16bitsigned(immediate)}';
+  }
+
+  @override
+  (int, int?) encode() {
+    return (add16bit(immediate, 0x21), null);
   }
 }

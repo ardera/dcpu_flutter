@@ -10,9 +10,28 @@ import 'package:dcpu_flutter/core/hardware.dart';
 import 'package:dcpu_flutter/core/instructions.dart';
 import 'package:dcpu_flutter/core/memory.dart';
 import 'package:fake_async/fake_async.dart';
-import 'package:flutter/material.dart';
 
 import 'math.dart';
+
+enum Register {
+  a,
+  b,
+  c,
+  x,
+  y,
+  z,
+  i,
+  j,
+  sp,
+  pc,
+  ex,
+  ia;
+
+  @override
+  String toString() {
+    return name.toUpperCase();
+  }
+}
 
 class RegisterFile {
   RegisterFile({
@@ -42,6 +61,40 @@ class RegisterFile {
   int pc;
   int ex;
   int ia;
+
+  int read(Register register) {
+    return switch (register) {
+      Register.a => a,
+      Register.b => b,
+      Register.c => c,
+      Register.x => x,
+      Register.y => y,
+      Register.z => z,
+      Register.i => i,
+      Register.j => j,
+      Register.sp => sp,
+      Register.pc => pc,
+      Register.ex => ex,
+      Register.ia => ia
+    };
+  }
+
+  void write(Register register, int value) {
+    final _ = switch (register) {
+      Register.a => a = value,
+      Register.b => b = value,
+      Register.c => c = value,
+      Register.x => x = value,
+      Register.y => y = value,
+      Register.z => z = value,
+      Register.i => i = value,
+      Register.j => j = value,
+      Register.sp => sp = value,
+      Register.pc => pc = value,
+      Register.ex => ex = value,
+      Register.ia => ia = value
+    };
+  }
 
   int readByIndex(int index) {
     assert(0 <= index && index <= 11);
@@ -312,24 +365,25 @@ class Dcpu {
       _decodedInstructions++;
     } on DecoderException catch (e) {
       if (disassemble) {
-        debugPrint(
+        print(
           'illegal instruction ${hexstring(memory.read(regs.pc))}: $e',
         );
       }
       fault();
+      skip = false;
       return;
     }
 
     if (skip) {
       if (disassemble) {
-        debugPrint(' skipping: ${instr.disassemble()}');
+        print(' skipping: ${instr.disassemble()}');
       }
       skip = instr.op.skipAgain;
 
       elapseCycles(instr.decodeCycleCount);
     } else {
       if (disassemble) {
-        debugPrint('executing: ${instr.disassemble()}');
+        print('executing: ${instr.disassemble()}');
       }
       instr.perform(this);
       _executedInstructions++;

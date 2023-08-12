@@ -1,0 +1,3 @@
+[submodule "third_party/dcpu_test_suite"]
+	path = third_party/dcpu_test_suite
+	url = https://github.com/bshepherdson/dcpu_test_suite.git

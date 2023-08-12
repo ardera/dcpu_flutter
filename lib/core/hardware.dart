@@ -1,7 +1,5 @@
 import 'package:dcpu_flutter/core/cpu.dart';
 import 'package:dcpu_flutter/core/memory.dart';
-import 'package:dcpu_flutter/peripherals/keyboard.dart';
-import 'package:dcpu_flutter/peripherals/lem1802.dart';
 
 class HardwareInfo {
   const HardwareInfo({
@@ -65,18 +63,11 @@ class HardwareController {
     return _devices[device].requestInterrupt(cpu);
   }
 
-  Lem1802Device? findLem1802() {
+  T? findDevice<T extends HardwareDevice>() {
     return _devices.cast<HardwareDevice?>().singleWhere(
-          (device) => device is Lem1802Device,
+          (device) => device is T,
           orElse: () => null,
-        ) as Lem1802Device?;
-  }
-
-  GenericKeyboard? findKeyboard() {
-    return _devices.cast<HardwareDevice?>().singleWhere(
-          (device) => device is GenericKeyboard,
-          orElse: () => null,
-        ) as GenericKeyboard?;
+        ) as T?;
   }
 
   void mapDeviceMemory({

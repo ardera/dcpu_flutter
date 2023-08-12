@@ -224,11 +224,11 @@ class DcpuView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final lem = cpu.hardwareController.findLem1802();
-    if (lem == null) {
+    final dev = cpu.hardwareController.findDevice<lem.Lem1802Device>();
+    if (dev == null) {
       return Container();
     }
 
-    return LEM1802View(lem1802: lem);
+    return LEM1802View(lem1802: dev);
   }
 }
