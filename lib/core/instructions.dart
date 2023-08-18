@@ -1279,6 +1279,40 @@ class HwiOp extends SpecialOp {
   final opcode = 0x12;
 }
 
+class LogOp extends SpecialOp {
+  @override
+  int get cycles => 1;
+
+  @override
+  String get mnemonic => 'LOG';
+
+  @override
+  int get opcode => 0x13;
+
+  @override
+  void perform(Dcpu state, Arg a) {
+    // TODO: implement perform
+    throw UnimplementedError();
+  }
+}
+
+class BrkOp extends SpecialOp {
+  @override
+  int get cycles => 1;
+
+  @override
+  String get mnemonic => 'BRK';
+
+  @override
+  int get opcode => 0x14;
+
+  @override
+  void perform(Dcpu state, Arg a) {
+    // TODO: implement perform
+    throw UnimplementedError();
+  }
+}
+
 class HltOp extends SpecialOp {
   const HltOp();
 
@@ -1293,7 +1327,8 @@ class HltOp extends SpecialOp {
 
   @override
   void perform(Dcpu state, Arg a) {
-    /// TODO: Implement
+    // TODO: Implement
+    throw UnimplementedError();
   }
 }
 
@@ -1367,10 +1402,7 @@ class DirectRegisterArg extends Arg {
   final Register register;
 
   static bool matches(int encoded) =>
-      (0 <= encoded && encoded <= 0x07) ||
-      encoded == 0x1b ||
-      encoded == 0x1c ||
-      encoded == 0x1d;
+      (0 <= encoded && encoded <= 0x07) || encoded == 0x1b || encoded == 0x1c || encoded == 0x1d;
 
   @override
   int read(Dcpu state) {
@@ -1441,8 +1473,7 @@ class IndirectRegisterArg extends Arg {
     Register.sp,
   };
 
-  static bool matches(int encoded) =>
-      (0x08 <= encoded && encoded <= 0x0f) || encoded == 0x19;
+  static bool matches(int encoded) => (0x08 <= encoded && encoded <= 0x0f) || encoded == 0x19;
 
   @override
   int read(Dcpu state) {
@@ -1497,16 +1528,14 @@ class IndirectRegisterImmediateArg extends Arg {
       0x16 => IndirectRegisterImmediateArg(Register.i, nextWord),
       0x17 => IndirectRegisterImmediateArg(Register.j, nextWord),
       0x1a => IndirectRegisterImmediateArg(Register.sp, nextWord),
-      _ => throw ArgumentError(
-          'Invalid indirect offset register encoding: $encoded'),
+      _ => throw ArgumentError('Invalid indirect offset register encoding: $encoded'),
     };
   }
 
   final Register register;
   final int immediate;
 
-  static bool matches(int encoded) =>
-      (0x10 <= encoded && encoded <= 0x17) || encoded == 0x1a;
+  static bool matches(int encoded) => (0x10 <= encoded && encoded <= 0x17) || encoded == 0x1a;
 
   static const allowedRegisters = {
     Register.a,
