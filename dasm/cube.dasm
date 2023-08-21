@@ -1,0 +1,478 @@
+; sin[x] = (1<<14)*(1+sin(x&255)) where x = 0..255
+; y*sin(t) -> y*((1+sin(t))-1) = y*(1+sin(t))-y  = (y*sin[t]>>14) - y
+; set a, y
+; set b, sin[t]
+; mul a, b
+; EX is now (y*(1+sin[t])>>2)
+; shl EX, 2
+; shr a, 14
+; add a, EX
+; sub a, y
+; 
+
+set [0x8280], 1
+set pc, mainloop
+:scale dat 25
+:speed1 dat 5
+:speed2 dat 2
+:mainloop
+; clear offscreen buffer
+set sp, 0x7000
+:clrloop
+dat 33153,33153,33153,33153,33153,33153,33153,33153 ; set pop,0 x16
+dat 33153,33153,33153,33153,33153,33153,33153,33153 ; 1 cycle each
+ifn sp, 0x7180 ; 3 cycles
+  set pc, clrloop ; 2 cycles  -> (16+3+2)*32*12/16 = 504 us to clear screen
+                  ; this could be 1 cycle if we had a better assembler... 
+                  ; try sub pc, 16+2+1 = sub pc, 19?
+set sp, 0
+
+; render points to offscreen buffer
+set i, vertices
+set j, vbuf
+:vertexloop
+; rotate b[1], b[2] by angle[0]
+set a, [angle]
+set x, [i] ; vertex.x
+set y, [i+1] ; vertex.y
+jsr rotate
+set [vertex], a ; vertex.x'
+set [vertex1], b ; vertex.y'
+; rotate b[0], b[1] by angle[1]
+set x, [i+2] ; vertex.z'
+set y, b   ; vertex.y'
+set a, [angle1]
+jsr rotate
+; a,b -> vertex.{z,y}
+set z, a
+set a, [vertex]
+; a,b are mostly in [-400,400]
+; we want them in [0,32],[0,24]
+
+add z, 1024 ; z from 768..1280
+; so we want kx/z in -256..256, (kx+cz)/z in 0..32, cz/z=16
+; k(-256/768)=-256 -> k=768
+; but that's totally bonkers; let's do the math from 0..65535
+; for this to work, kx+cz must be < 65536
+; x is -256..256, z is 768..1280, c is 256
+; we need to bring z down by a factor of >10
+; lets just do >>4 on x and z
+; k(-256/48)=-256; k=48
+shr z, 4
+set c, 256
+mul c, z ; c is cz
+
+mul a, [scale]
+add a, c
+;ifg a, 0x7fff
+;  set pc, offscreen
+div a, z
+;ifg a, 31
+;  set pc, offscreen
+set c, 192
+mul c, z
+mul b, [scale]
+add b, c
+;ifg b, 0x7fff
+;  set pc, offscreen
+div b, z
+;ifg b, 23
+;  set pc, offscreen
+set [j], a
+set [j+1], b
+set [j+2], z
+
+add i, 3
+add j, 3
+ifn i, lastvertex
+  set pc, vertexloop
+
+; now run through edges and draw lines
+set i, edges
+:edgeloop
+
+set z, [i]
+set a, [vbuf+z]
+set b, [vbuf1+z]
+set z, [i+1]
+set x, [vbuf+z]
+set y, [vbuf1+z]
+jsr drawline
+
+add i, 2
+ifn i, lastedge
+  set pc, edgeloop
+
+; copy offscreen to on-screen
+:redraw
+set sp, 0x8000
+set a, 0x7000
+:cploop
+set push, [a] ; unroll 8x copy to screen (this one is 1 cycle)
+set push, [a+1] ; each of these is 2 cycles
+set push, [a+2] ; loop cost is (7+15)*32*12/8 = 1056 cycles = 1.056ms
+set push, [a+3] ; if we unroll N times, (7+2*N-1)*32*12/N
+set push, [a+4] ; (N must divide 384)
+set push, [a+5] ; 912 cycles to unroll 16x
+set push, [a+6] ; 840 if we unroll 32x
+set push, [a+7] ; guess the asymptote is 768 if we unroll 384x
+; in fact, we might as well have a loop that just writes 'set pop, [x]'
+; instructions 384 times into memory ("speedcode"!)
+add a, 8 ; 2 cycles
+ifn a, 0x7180 ; 3 cycles
+  set pc, cploop ; 2 cycles
+
+add [angle], [speed1]
+add [angle1], [speed2]
+set pc, mainloop ; mainloop will restore sp to something sane
+
+; rotate x,y -> a,b by angle a
+; a = [cos a, -sin a] [x y]
+; b = [sin a,  cos a] [x y]
+; x and y are bounded by [-1023, 1023]
+; so let's add 1024 to them to get around the lack of imul without branching or
+; holding onto sign flags -- and it means the result of the mul will be 1<<24
+;(cx+a)(dy+b) = cdxy + cxb + dya + ab
+; xy = ((cx+a)(dy+b) - cxb - dya - ab) / cd
+;    = (cx+a)(dy+b)/cd - xb/d - ya/c - ab/cd
+; in this case
+; c=256, x -> coord, a=1024
+; d=256, y -> sin, b=256
+; cx+a = reg, dy+b = sin
+; x=(reg-a)/c = reg/c - a/c
+; y=(sin-b)/d = sin/d - b/d
+; xy = (cx+a)(dy+b)/cd - xb/d - ya/c - ab/cd
+; xy = reg*sin/cd - b(reg-a)/cd - a(sin-b)/cd - ab/cd
+; 
+; assume c is 1 so we maintain flexibility, a=16384, b=256, c=1, d=256
+; in that case
+; xy = reg*sin>>8 - (reg-16384) - (sin-256)<<6 - 16384
+;    = reg*sin>>8 - reg + 16384 - sin<<6 + 16384 - 16384
+;    = reg*sin>>8 - reg - sin<<6 + 16384
+; e.g.
+; x = 0
+; reg = 16384
+; sin = 512
+; 32768 - 16384 - 32768 + 16384 -> 0
+; reg = 50+16384 = 16434
+; sin = -0.5*256+256 = 128
+; 128*16434/256 - 16434 - 128*64 + 16384
+; 8217 - 16434 - 8192 + 16384 = -25!
+; ok, this is sound.
+
+
+:xcos
+dat 0
+:ycos
+dat 0
+:xsin
+dat 0
+:ysin
+dat 0
+
+:rotate
+set push, i
+set push, j
+
+add x, 16384
+add y, 16384
+and a, 255
+set i, [sin_tbl+a] ; i -> sin(a)
+add a, 64
+and a, 255
+set j, [sin_tbl+a] ; j -> cos(a)
+
+set a, x  ; x*sin
+mul a, i
+set b, EX
+shr a, 8
+shl b, 8
+add a, b
+sub a, x
+set b, i
+shl b, 6
+sub a, b
+add a, 16384
+set [xsin], a
+
+set a, y  ; y*sin
+mul a, i
+set b, EX
+shr a, 8
+shl b, 8
+add a, b
+sub a, y
+set b, i
+shl b, 6
+sub a, b
+add a, 16384
+set [ysin], a
+
+set a, x  ; x*cos
+mul a, j
+set b, EX
+shr a, 8
+shl b, 8
+add a, b
+sub a, x
+set b, j
+shl b, 6
+sub a, b
+add a, 16384
+set [xcos], a
+
+set a, y  ; y*cos
+mul a, j
+set b, EX
+shr a, 8
+shl b, 8
+add a, b
+sub a, y
+set b, j
+shl b, 6
+sub a, b
+add a, 16384
+set [ycos], a
+
+set a, [xcos]
+sub a, [ysin]
+
+set b, [xsin]
+add b, [ycos]
+
+set j, pop
+set i, pop
+set pc, pop
+
+; 
+:sin_tbl  ; sin_tbl[a] = 256*sin(pi*a/128) + 256
+dat 256, 262, 268, 274, 281, 287, 293, 299, 305, 312, 318, 324, 330, 336
+dat 342, 348, 353, 359, 365, 371, 376, 382, 387, 392, 398, 403, 408, 413
+dat 418, 423, 427, 432, 437, 441, 445, 449, 453, 457, 461, 465, 468, 472
+dat 475, 478, 481, 484, 487, 490, 492, 494, 497, 499, 500, 502, 504, 505
+dat 507, 508, 509, 510, 510, 511, 511, 511, 512, 511, 511, 511, 510, 510
+dat 509, 508, 507, 505, 504, 502, 500, 499, 497, 494, 492, 490, 487, 484
+dat 481, 478, 475, 472, 468, 465, 461, 457, 453, 449, 445, 441, 437, 432
+dat 427, 423, 418, 413, 408, 403, 398, 392, 387, 382, 376, 371, 365, 359
+dat 353, 348, 342, 336, 330, 324, 318, 312, 305, 299, 293, 287, 281, 274
+dat 268, 262, 256, 250, 244, 238, 231, 225, 219, 213, 207, 200, 194, 188
+dat 182, 176, 170, 164, 159, 153, 147, 141, 136, 130, 125, 120, 114, 109
+dat 104, 99, 94, 89, 85, 80, 75, 71, 67, 63, 59, 55, 51, 47, 44, 40, 37
+dat 34, 31, 28, 25, 22, 20, 18, 15, 13, 12, 10, 8, 7, 5, 4, 3, 2, 2, 1, 1
+dat 1, 0, 1, 1, 1, 2, 2, 3, 4, 5, 7, 8, 10, 12, 13, 15, 18, 20, 22, 25
+dat 28, 31, 34, 37, 40, 44, 47, 51, 55, 59, 63, 67, 71, 75, 80, 85, 89
+dat 94, 99, 104, 109, 114, 120, 125, 130, 136, 141, 147, 153, 159, 164
+dat 170, 176, 182, 188, 194, 200, 207, 213, 219, 225, 231, 238, 244, 250
+
+:vertices
+;row1: (0, 256), (243, 79), (150, -207), (-150, -207), (-243, 79)
+;row2: (150, 207), (-150, 207), (-243, -79), (0, -256), (243, -79)
+dat   256,   256,   256
+dat   256,   256, 65280
+dat   256, 65280,   256
+dat   256, 65280, 65280
+dat 65280,   256,   256
+dat 65280,   256, 65280
+dat 65280, 65280,   256
+dat 65280, 65280, 65280
+:lastvertex
+
+:edges
+dat 0, 3  ; 0, 1
+dat 0, 6  ; 0, 2
+dat 0, 12 ; 0, 4
+dat 3, 9  ; 1, 3
+dat 3, 15 ; 1, 5
+dat 6, 9  ; 2, 3
+dat 6, 18 ; 2, 6
+dat 9, 21 ; 3, 7
+dat 12,15 ; 4, 5
+dat 12,18 ; 4, 6
+dat 15,21 ; 5, 7
+dat 18,21 ; 6, 7
+:lastedge
+
+
+:angle
+dat 0
+:angle1
+dat 0
+
+:vertex
+dat 0
+:vertex1
+dat 0
+:vertex2
+dat 0
+
+:drawline
+set push, c
+set push, z
+set push, i
+set push, j
+jsr unsafe_drawline
+set j, pop
+set i, pop
+set z, pop
+set c, pop
+set pc, pop
+
+:unsafe_drawline
+; a: loop counter (x1-x)
+; x: dx (x1-x0)
+; y: dy (y1-y0)
+; i: address being plotted
+; c: character value being plotted
+; j: err*dx;
+; inner loop: err += dy; if(err>=dx) { y++; err-=dx; }
+; if x1<x0 swap the points
+; but if |dy|>|dx| we need to iterate by y, and potentially swap the points again
+; so first, find out if |dy|>|dx|
+sub x, a ; x = dx -> x1 = a+x
+sub y, b ; y = dy -> y1 = b+y
+; we can safely clobber czij here
+set c, x
+ifg c, 0x7fff
+  mul c, 65535   ; c = abs(dx)
+set z, y
+ifg z, 0x7fff
+  mul z, 65535   ; z = abs(dy)
+ifg z, c ; if abs(dy) > abs(dx)
+  set pc, drawsteepline
+ife c, x ; if abs(dx) == x
+  set pc, drawline1
+ ; else, flip x0,y0 with x1,y1
+ add a, x ; a = x1
+ set x, c ; dx = abs(dx)
+ add b, y ; b = y1
+ mul y, 65535 ; dy = -dy
+:drawline1
+set j, b ; j = err...
+and j, 15
+mul j, x 
+shr j, 4 ; err0 = ((y&15)*dx)>>4
+; -- FIXME: need to fixup err by x&15*dy>>4 as well to account for subpixel
+;    horizontal offsets
+set i, b
+and i, 0xffe0
+shr a, 4
+add i, a
+add i, 0x7000 ; i = addr = (a>>4) + (b>>5)<<5
+set c, 0x0f1c ; char = lower half-block with bg set (= pixel on top)
+ifb b, 0x10
+  xor c, 0xff00 ; lower by 1/2 block by swapping fg/bg
+set a, x
+add a, 15 ; round up to next 16th
+shr a, 4 ; a = (dx+15)/16 = loop counter
+ifg y, 0x7fff ; if dy<0
+  set pc, dloop_shallow_negdy
+
+:dloop_shallow_posdy
+bor [i], c ; plot pixel
+sub a, 1
+ife a, 0 ; if a == 0, return
+  set pc, pop
+add i, 1
+add j, y ; err += dy
+ifg x, j ; if dx > err
+  set pc, dloop_shallow_posdy
+; else ++y
+sub j, x ; err -= dx
+xor c, 0xff00
+ife c, 0x0f1c
+  add i, 32 ; incr addr
+set pc, dloop_shallow_posdy
+
+:dloop_shallow_negdy
+bor [i], c ; plot pixel
+sub a, 1
+ife a, 0 ; if a == 0, return
+  set pc, pop
+add i, 1
+add j, y ; err += dy (note: dy is negative)
+ifg 0x8000, j ; if err >= 0
+  set pc, dloop_shallow_negdy
+; else --y
+add j, x ; err += dx
+xor c, 0xff00
+ife c, 0xf01c
+  sub i, 32 ; decr addr
+set pc, dloop_shallow_negdy
+
+
+
+:drawsteepline
+ife z, y ; if abs(dy) == y
+  set pc, drawline2
+ ; else, flip x0,y0 with x1,y1
+ add a, x ; a = x1
+ mul x, 65535 ; dx = -dx
+ add b, y ; b = y1
+ set y, z ; dy = abs(dy)
+:drawline2
+set j, a ; j = err...
+and j, 15
+mul j, y  ; (in terms of dy)
+shr j, 4 ; err0 = ((x&15)*dy)>>4
+; -- FIXME: need to fixup err by y&15*dx>>4 as well to account for subpixel
+;    horizontal offsets
+set i, b
+and i, 0xffe0
+shr a, 4
+add i, a
+add i, 0x7000 ; i = addr = (a>>4) + (b>>5)<<5
+set c, 0x0f1c ; char = lower half-block with bg set (= pixel on top)
+ifb b, 0x10
+  xor c, 0xff00 ; lower by 1/2 block by swapping fg/bg
+set a, y
+add a, 15 ; round up to next 16th
+shr a, 4 ; a = (dy+15)/16 = loop counter
+ifg x, 0x7fff ; if dx<0
+  set pc, dloop_steep_negdx
+
+:dloop_steep_posdx
+bor [i], c ; plot pixel
+sub a, 1
+ife a, 0 ; if a == 0, return
+  set pc, pop
+xor c, 0xff00
+ife c, 0x0f1c
+  add i, 32 ; incr addr
+add j, x ; err += dx
+ifg y, j ; if dy > err
+  set pc, dloop_steep_posdx
+; else ++x
+add i, 1
+sub j, y ; err -= dy
+set pc, dloop_steep_posdx
+
+:dloop_steep_negdx
+bor [i], c ; plot pixel
+sub a, 1
+ife a, 0 ; if a == 0, return
+  set pc, pop
+xor c, 0xff00
+ife c, 0x0f1c
+  add i, 32 ; incr addr
+add j, x ; err += dx
+ifg 0x8000, j ; if err >= 0
+  set pc, dloop_steep_negdx
+; else --x
+sub i, 1
+add j, y ; err += dy
+set pc, dloop_steep_negdx
+
+;;; bss section
+
+:proj_cz
+dat 0
+:proj_cz1
+dat 0
+:proj_kx
+dat 0
+:proj_kx1
+dat 0
+
+:vbuf
+dat 0
+:vbuf1
