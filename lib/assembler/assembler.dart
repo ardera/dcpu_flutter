@@ -898,6 +898,18 @@ class Assembler {
     }
   }
 
+  void invokeMacro(
+    MacroInvocation ast, {
+    required RootAssemblyContext context,
+    required AssemblyWriter writer,
+    required List<(Unassembled<dcpu.Instruction>, CapturedAssemblyContext, int)> unassembled,
+  }) {
+    logger.info('MACRO ${ast.name.value}');
+
+    // TODO: Implement
+    throw UnimplementedError();
+  }
+
   MaybeUnassembled<int> assembleTerm(Term ast, {required AssemblyContext context}) {
     final unassembled = UnassembledTerm(ast);
 
@@ -1068,28 +1080,39 @@ class Assembler {
           logger.info('LET MACRO $name := $node');
           context.defineMacro(name, node);
 
-        case MacroInvocation(name: MyToken<String>(value: final name), :final location):
-          if (!context.macroDefined(name)) {
-            throw SemanticError(location, 'Invocation of undefined macro $name');
+        case MacroInvocation macro:
+          if (!context.macroDefined(macro.name.value)) {
+            throw SemanticError(macro.location, 'Invocation of undefined macro ${macro.name.value}');
           }
 
-          logger.info('MACRO $name');
-          throw UnimplementedError();
+          invokeMacro(
+            macro,
+            context: context,
+            writer: writer,
+            unassembled: unassembled,
+          );
 
-        case InstructionOrMacroInvocation(
-            macroInvocation: MacroInvocation(name: MyToken<String>(value: final name)),
-            instruction: final instr
-          ):
-          if (context.macroDefined(name)) {
-            logger.info('MACRO $name');
-            throw UnimplementedError();
-          } else {
+        case InstructionOrMacroInvocation(:final macroInvocation, instruction: final instr):
+          final opIsKnown = dcpu.Op.values.any(
+            (op) => op.mnemonic.toUpperCase() == instr.mnemonic.value.toUpperCase(),
+          );
+
+          if (context.macroDefined(macroInvocation.name.value)) {
+            invokeMacro(
+              macroInvocation,
+              context: context,
+              writer: writer,
+              unassembled: unassembled,
+            );
+          } else if (opIsKnown) {
             assembleAndEmitInstruction(
               instr,
               writer: writer,
               context: context,
               unassembled: unassembled,
             );
+          } else {
+            throw SemanticError(instr.location, 'Unknown macro or opcode');
           }
 
         case LabelDeclaration(name: LabelName(name: MyToken<String>(value: final name))):
