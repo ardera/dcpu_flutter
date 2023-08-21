@@ -6,12 +6,24 @@ import 'package:dcpu_flutter/core/math.dart';
 import 'package:flutter/material.dart';
 
 class GenericClock extends HardwareDevice {
+  GenericClock({required this.flags});
+
+  final DcpuCompatibilityFlags flags;
+
+  static const _genericInfo = HardwareInfo(
+    hardwareId: 0x12d0b402,
+    version: 1,
+    manufacturerId: 0x00000000,
+  );
+
+  static const _nyaElektriskaInfo = HardwareInfo(
+    hardwareId: 0x12d0b402,
+    version: 1,
+    manufacturerId: 0x1c6c8b36,
+  );
+
   @override
-  HardwareInfo get info => const HardwareInfo(
-        hardwareId: 0x12d0b402,
-        version: 1,
-        manufacturerId: 0,
-      );
+  HardwareInfo get info => flags.clockManufacturedByNyaElektriska ? _nyaElektriskaInfo : _genericInfo;
 
   Timer? _timer;
 
@@ -28,9 +40,13 @@ class GenericClock extends HardwareDevice {
     debugPrint('CLOCK_SET $b');
 
     if (b == 0) {
-      _tickDuration = null;
-
-      _initialTime = null;
+      // if CLOCK_QUERY should report the ticks to the last CLOCK_SET x  (x!=0)
+      // we don't clear the tick duration and initial time here.
+      // instead we only override it in CLOCK_SET 1 (for example).
+      if (flags.clockQueryReportsTicksToLastEnable == false) {
+        _tickDuration = null;
+        _initialTime = null;
+      }
 
       _timer?.cancel();
       _timer = null;
@@ -52,8 +68,7 @@ class GenericClock extends HardwareDevice {
   void queryTicks(Dcpu cpu) {
     late int c;
     if (_initialTime != null && _tickDuration != null) {
-      final elapsedMicroseconds =
-          cpu.getClock().now().difference(_initialTime!).inMicroseconds;
+      final elapsedMicroseconds = cpu.getClock().now().difference(_initialTime!).inMicroseconds;
 
       final result = elapsedMicroseconds ~/ _tickDuration!.inMicroseconds;
 

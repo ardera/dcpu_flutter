@@ -23,7 +23,7 @@ class Dasm16ParserDefinition extends GrammarDefinition {
   }
 
   late final file = seq2PickFirst(
-    line.star().map((line) => line.expand((nodes) => nodes).toList()),
+    line.starLazy(endOfInput()).map((line) => line.expand((nodes) => nodes).toList()),
     endOfInput() | line,
   ).map((nodes) => AssemblyFile(nodes));
 
@@ -31,8 +31,7 @@ class Dasm16ParserDefinition extends GrammarDefinition {
     <Parser>[
       labelLine,
       macroDefinitionLine,
-      pseudoInstructionLine,
-      instructionOrMacroInvocationLine,
+      instructionLine,
       emptyLine,
     ],
     failureJoiner: selectFarthest,
@@ -56,7 +55,7 @@ class Dasm16ParserDefinition extends GrammarDefinition {
     identifier,
     equalsToken,
     newline().neg().plus().flatten().dasmToken(),
-    newline(),
+    endOfLine,
   ).map6((_, __, name, equals, contents, ___) {
     return MacroDefinition(name, equals, contents);
   }).labeled('macro definition line');
@@ -73,14 +72,19 @@ class Dasm16ParserDefinition extends GrammarDefinition {
   }).labeled('pseudo instruction line');
 
   late final pseudoInstruction = seq3(
-    dotToken,
+    (dotToken | numberSignToken).cast<MyToken<String>>().optional(),
     directiveNameToken,
     pseudoInstructionArgs,
   ).map((values) {
-    return DotInstruction(values.first, values.second, values.third);
-  });
+    return PseudoInstr(values.first, values.second, values.third);
+  }).labeled('pseudo-instruction');
 
-  late final pseudoInstructionArgs = pseudoInstructionArg.plusSeparated(commaToken);
+  late final pseudoInstructionArgs = seq2PickFirst(
+    pseudoInstructionArg.plusSeparated(commaToken),
+
+    /// TODO: Don't discard comma token
+    features.allowTrailingCommaInPseudoInstructionArgs ? commaToken.optional() : epsilon(),
+  );
 
   late final pseudoInstructionArg = ChoiceParser([
     packedString,
@@ -88,7 +92,7 @@ class Dasm16ParserDefinition extends GrammarDefinition {
       identifier,
       term,
     ]).map((values) {
-      return DotInstrArg.nameOrTerm(
+      return PseudoInstrArg.nameOrTerm(
         values[0] as MyToken<String>?,
         values[1] as Term?,
       );
@@ -110,17 +114,29 @@ class Dasm16ParserDefinition extends GrammarDefinition {
       (char('\\').not() & char('"')).neg().star().flatten(),
       char('"'),
     ).map3((_, str, __) => str).dasmToken(),
-  ).map3(DotInstrArg.string).trimPreserve(space);
+  ).map3(PseudoInstrArg.string).trimPreserve(space);
 
   late final labelLine = seq2PickFirst(
     labelDeclaration,
     newline('Unexpected character'),
   ).map((value) => [value]);
 
-  late final instructionOrMacroInvocationLine = seq3(
+  late final endOfLine = newline() | endOfInput();
+
+  late final instructionLine = seq2(
     labelDeclaration.optional(),
-    instructionOrMacroInvocation,
-    newline('Unexpected character'),
+    SomeOfParser(
+      <Parser<ASTNode>>[
+        seq2PickFirst(instruction, endOfLine),
+        seq2PickFirst(macroInvocation, endOfLine),
+        seq2PickFirst(pseudoInstruction, endOfLine),
+      ],
+      failureJoiner: selectFarthest,
+    ).map<TopLevelASTNode>((value) {
+      final [Instruction? instr, MacroInvocation? macro, PseudoInstr? pseudoInstr] = value;
+
+      return InstrOrMacroOrPseudoInstr(instr, macro, pseudoInstr);
+    }),
   ).map((values) {
     return [
       if (values.first != null) values.first!,
@@ -128,31 +144,12 @@ class Dasm16ParserDefinition extends GrammarDefinition {
     ];
   }).labeled('instruction or macro invocation line');
 
-  late final instructionOrMacroInvocation = SomeOfParser(
-    <Parser<TopLevelASTNode>>[instruction, macroInvocation],
-    failureJoiner: selectFarthest,
-  ).map<TopLevelASTNode>((value) {
-    final first = value[0] as Instruction?;
-    final second = value[1] as MacroInvocation?;
-
-    if (first != null && second != null) {
-      return InstructionOrMacroInvocation(first, second);
-    } else if (first != null) {
-      return first;
-    } else if (second != null) {
-      return second;
-    } else {
-      throw ArgumentError.value(value, 'value');
-    }
-  });
-
   late final macroInvocation = seq2(
     identifier,
     ChoiceParser([term, arg]).starSeparated(commaToken),
-  ).map2((name, args) => MacroInvocation(name));
+  ).map2((name, args) => MacroInvocation(name)).labeled('macro invocation');
 
-  late final emptyLine =
-      seq2(space.star(), newline('Unexpected character')).map((_) => <TopLevelASTNode>[]).labeled('empty line');
+  late final emptyLine = seq2(space.star(), endOfLine).map((_) => <TopLevelASTNode>[]).labeled('empty line');
 
   late final labelDeclaration = ChoiceParser([
     seq2(labelSign, labelName).map2(
@@ -164,21 +161,27 @@ class Dasm16ParserDefinition extends GrammarDefinition {
   ]);
 
   late final labelSign = colonToken;
-  late final labelName = labelNameToken.map((token) => LabelName(token));
+  late final labelName = labelNameToken;
 
   late final instruction = seq2(instructionName, instructionArgs).map2(
     (name, args) {
       return Instruction(
         mnemonic: name,
-        argB: args.$1,
-        argA: args.$2,
+        b: args.$1,
+        a: args.$2,
       );
     },
   ).labeled('instruction');
 
   late final instructionName = mnemonicToken.labeled('instruction name');
 
-  late final instructionArgs = seq2(arg, seq2PickSecond(commaToken, arg).optional()).map2((first, second) {
+  late final instructionArgs = seq2(
+    arg,
+    seq2PickSecond(
+      features.allowInstructionArgsWithoutComma ? commaToken.optional() : commaToken,
+      arg,
+    ).optional(),
+  ).map2((first, second) {
     if (second == null) {
       return (null, second ?? first);
     } else {
@@ -208,7 +211,14 @@ class Dasm16ParserDefinition extends GrammarDefinition {
     failureJoiner: selectFarthest,
   ).labeled('instruction argument');
 
-  late final registerOffsetArg = seq3(registerName, binOp, term).map3(InstructionArg.registerOffset);
+  late final registerOffsetArg = [
+    seq3(registerName, binOp, term).map3(InstructionArg.registerOffset),
+    seq3(atomicTerm, binOp, registerName).map3(
+      (term, binOp, register) {
+        return InstructionArg.registerOffset(register, binOp, term);
+      },
+    ),
+  ].toChoiceParser();
 
   late final registerArg = registerName.map(InstructionArg.register);
 
@@ -430,25 +440,25 @@ class Dasm16ParserDefinition extends GrammarDefinition {
   );
 
   late final peekToken = token(
-    stringIgnoreCase('PEEK'),
+    stringIgnoreCase('PEEK') & identifierMidChar.not(),
     failureMessage: 'PEEK expected',
     label: 'PEEK',
   );
 
   late final pickToken = token(
-    stringIgnoreCase('PICK'),
+    stringIgnoreCase('PICK') & identifierMidChar.not(),
     failureMessage: 'PICK expected',
     label: 'PICK',
   );
 
   late final pushToken = token(
-    stringIgnoreCase('PUSH'),
+    stringIgnoreCase('PUSH') & identifierMidChar.not(),
     failureMessage: 'PUSH expected',
     label: 'PUSH',
   );
 
   late final popToken = token(
-    stringIgnoreCase('POP'),
+    stringIgnoreCase('POP') & identifierMidChar.not(),
     failureMessage: 'POP expected',
     label: 'POP',
   );

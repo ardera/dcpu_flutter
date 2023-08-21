@@ -27,19 +27,19 @@ sealed class TopLevelASTNode extends ASTNode {
   const TopLevelASTNode();
 }
 
-class DotInstruction extends TopLevelASTNode {
-  const DotInstruction(this.prefix, this.name, this.args);
+class PseudoInstr extends TopLevelASTNode {
+  const PseudoInstr(this.prefix, this.name, this.args);
 
-  final MyToken<String> prefix;
+  final MyToken<String>? prefix;
   final MyToken<String> name;
-  final SeparatedList<DotInstrArg, MyToken<String>> args;
+  final SeparatedList<PseudoInstrArg, MyToken<String>> args;
 
   @override
   Iterable<MyToken> get tokens => [
-        prefix,
+        if (prefix != null) prefix!,
         name,
         ...args.sequential.expand((element) {
-          if (element case DotInstrArg()) {
+          if (element case PseudoInstrArg()) {
             return element.tokens;
           } else if (element case MyToken<String>()) {
             return [element];
@@ -50,34 +50,31 @@ class DotInstruction extends TopLevelASTNode {
       ];
 
   @override
-  String toString() => 'DotInstruction(prefix: $prefix, name: $name, args: $args)';
+  String toString() => 'PseudoInstr(prefix: $prefix, name: $name, args: $args)';
 }
 
-sealed class DotInstrArg extends ASTNode {
-  const DotInstrArg();
+sealed class PseudoInstrArg extends ASTNode {
+  const PseudoInstrArg();
 
-  factory DotInstrArg.nameOrTerm(MyToken<String>? name, Term? term) {
+  factory PseudoInstrArg.nameOrTerm(MyToken<String>? name, Term? term) {
     return NameOrTerm(name, term);
   }
 
-  factory DotInstrArg.string(List<MyToken<StringPackingFlag>> flags, MyToken<int>? orValue, MyToken<String> string) =
+  factory PseudoInstrArg.string(List<MyToken<StringPackingFlag>> flags, MyToken<int>? orValue, MyToken<String> string) =
       PackedString;
 }
 
-class NameOrTerm extends DotInstrArg {
+class NameOrTerm extends PseudoInstrArg {
   NameOrTerm(this.name, this.term);
 
   final MyToken<String>? name;
   final Term? term;
 
   @override
-  String toString() => 'NameOrTermDotInstrArg(name: $name, term: $term)';
+  String toString() => 'NameOrTerm(name: $name, term: $term)';
 
   @override
-  Iterable<MyToken> get tokens => [
-        ...?term?.tokens,
-        if (name != null) name!,
-      ];
+  Iterable<MyToken> get tokens => term?.tokens ?? [name!];
 }
 
 enum StringPackingFlag {
@@ -89,7 +86,7 @@ enum StringPackingFlag {
   wordPascalLength,
 }
 
-class PackedString extends DotInstrArg {
+class PackedString extends PseudoInstrArg {
   const PackedString(this.flags, this.orValue, this.string);
 
   final List<MyToken<StringPackingFlag>> flags;
@@ -108,7 +105,7 @@ class PackedString extends DotInstrArg {
       ];
 
   @override
-  String toString() => 'StringDotInstrArg(flags: $flags, orValue: $orValue, string: $string)';
+  String toString() => 'PackedString(flags: $flags, orValue: $orValue, string: $string)';
 
   String toStringShort() {
     return 'StringDotInstrArg(${flags.map((e) => e.value.name).join()}"${string.value}" | $orValue)';
@@ -128,7 +125,7 @@ class MacroDefinition extends TopLevelASTNode {
   Iterable<MyToken> get tokens => [name];
 }
 
-class MacroInvocation extends TopLevelASTNode {
+class MacroInvocation extends ASTNode {
   const MacroInvocation(this.name);
 
   final MyToken<String> name;
@@ -137,62 +134,51 @@ class MacroInvocation extends TopLevelASTNode {
   Iterable<MyToken> get tokens => [name];
 }
 
-class InstructionOrMacroInvocation extends TopLevelASTNode {
-  const InstructionOrMacroInvocation(this.instruction, this.macroInvocation);
+class InstrOrMacroOrPseudoInstr extends TopLevelASTNode {
+  const InstrOrMacroOrPseudoInstr(this.instruction, this.macroInvocation, this.pseudoInstruction);
 
-  final Instruction instruction;
-  final MacroInvocation macroInvocation;
-
-  @override
-  Iterable<MyToken> get tokens => instruction.tokens;
-}
-
-class LabelName extends ASTNode {
-  const LabelName(this.name);
-
-  final MyToken<String> name;
+  final Instruction? instruction;
+  final MacroInvocation? macroInvocation;
+  final PseudoInstr? pseudoInstruction;
 
   @override
-  Iterable<MyToken> get tokens => [name];
-
-  @override
-  String toString() => 'LabelName(name: $name)';
+  Iterable<MyToken> get tokens => instruction?.tokens ?? macroInvocation?.tokens ?? pseudoInstruction!.tokens;
 }
 
 class LabelDeclaration extends TopLevelASTNode {
   const LabelDeclaration(this.labelSign, this.name);
 
   final MyToken<String> labelSign;
-  final LabelName name;
+  final MyToken<String> name;
 
   @override
-  Iterable<MyToken> get tokens => [labelSign, ...name.tokens];
+  Iterable<MyToken> get tokens => [labelSign, name];
 
   @override
-  String toString() => 'Label(name: $name)';
+  String toString() => 'LabelDeclaration(labelSign: $labelSign, name: $name)';
 }
 
-class Instruction extends TopLevelASTNode {
+class Instruction extends ASTNode {
   const Instruction({
     required this.mnemonic,
-    required this.argB,
-    required this.argA,
+    required this.b,
+    required this.a,
   });
 
   final MyToken<String> mnemonic;
 
-  final InstructionArg? argB;
-  final InstructionArg argA;
+  final InstructionArg? b;
+  final InstructionArg a;
 
   @override
   Iterable<MyToken> get tokens => [
         mnemonic,
-        if (argB != null) ...argB!.tokens,
-        ...argA.tokens,
+        if (b != null) ...b!.tokens,
+        ...a.tokens,
       ];
 
   @override
-  String toString() => 'Instruction(mnemonic: $mnemonic, argB: $argB, argA: $argA)';
+  String toString() => 'Instruction(mnemonic: $mnemonic, b: $b, a: $a)';
 }
 
 sealed class InstructionArg extends ASTNode {
@@ -204,19 +190,19 @@ sealed class InstructionArg extends ASTNode {
   const factory InstructionArg.register(MyToken<Register> register) = RegisterArg;
 
   const factory InstructionArg.registerOffset(MyToken<Register> register, MyToken<BinOp> op, Term offset) =
-      RegisterOffsetArg;
+      RegisterOffset;
 
-  const factory InstructionArg.push(MyToken<String> token) = PushArg;
+  const factory InstructionArg.push(MyToken<String> token) = Push;
 
-  const factory InstructionArg.spPlusPlus(MyToken<String> sp, MyToken<String> plusPlus) = SpPlusPlusArg;
+  const factory InstructionArg.spPlusPlus(MyToken<String> sp, MyToken<String> plusPlus) = SpPlusPlus;
 
-  const factory InstructionArg.pop(MyToken<String> token) = PopArg;
+  const factory InstructionArg.pop(MyToken<String> token) = Pop;
 
-  const factory InstructionArg.minusMinusSp(MyToken<String> minusMinus, MyToken<String> sp) = MinusMinusSpArg;
+  const factory InstructionArg.minusMinusSp(MyToken<String> minusMinus, MyToken<String> sp) = MinusMinusSp;
 
-  const factory InstructionArg.peek(MyToken<String> token) = PeekArg;
+  const factory InstructionArg.peek(MyToken<String> token) = Peek;
 
-  const factory InstructionArg.pick(MyToken<String> pick, Term offset) = PickArg;
+  const factory InstructionArg.pick(MyToken<String> pick, Term offset) = Pick;
 }
 
 class IndirectArg extends InstructionArg {
@@ -249,8 +235,8 @@ class RegisterArg extends InstructionArg {
   String toString() => 'RegisterArg(register: $register)';
 }
 
-class RegisterOffsetArg extends InstructionArg {
-  const RegisterOffsetArg(this.register, this.offsetOp, this.offset);
+class RegisterOffset extends InstructionArg {
+  const RegisterOffset(this.register, this.offsetOp, this.offset);
 
   final MyToken<Register> register;
   final MyToken<BinOp> offsetOp;
@@ -264,11 +250,11 @@ class RegisterOffsetArg extends InstructionArg {
       ];
 
   @override
-  String toString() => 'RegisterOffsetArg(register: $register, offsetOp: $offsetOp, offset: $offset)';
+  String toString() => 'RegisterOffset(register: $register, offsetOp: $offsetOp, offset: $offset)';
 }
 
-class PushArg extends InstructionArg {
-  const PushArg(this.token);
+class Push extends InstructionArg {
+  const Push(this.token);
 
   final MyToken<String> token;
 
@@ -276,11 +262,11 @@ class PushArg extends InstructionArg {
   get tokens => [token];
 
   @override
-  String toString() => 'PushArg(token: $token)';
+  String toString() => 'Push(token: $token)';
 }
 
-class SpPlusPlusArg extends InstructionArg {
-  const SpPlusPlusArg(this.spToken, this.plusPlusToken);
+class SpPlusPlus extends InstructionArg {
+  const SpPlusPlus(this.spToken, this.plusPlusToken);
 
   final MyToken<String> spToken;
   final MyToken<String> plusPlusToken;
@@ -289,11 +275,11 @@ class SpPlusPlusArg extends InstructionArg {
   Iterable<MyToken> get tokens => [spToken, plusPlusToken];
 
   @override
-  String toString() => 'SpPlusPlusArg(spToken: $spToken, plusPlusToken: $plusPlusToken)';
+  String toString() => 'SpPlusPlus(spToken: $spToken, plusPlusToken: $plusPlusToken)';
 }
 
-class PopArg extends InstructionArg {
-  const PopArg(this.token);
+class Pop extends InstructionArg {
+  const Pop(this.token);
 
   final MyToken<String> token;
 
@@ -301,11 +287,11 @@ class PopArg extends InstructionArg {
   Iterable<MyToken> get tokens => [token];
 
   @override
-  String toString() => 'PopArg(token: $token)';
+  String toString() => 'Pop(token: $token)';
 }
 
-class MinusMinusSpArg extends InstructionArg {
-  const MinusMinusSpArg(this.minusMinusToken, this.spToken);
+class MinusMinusSp extends InstructionArg {
+  const MinusMinusSp(this.minusMinusToken, this.spToken);
 
   final MyToken<String> minusMinusToken;
   final MyToken<String> spToken;
@@ -314,11 +300,11 @@ class MinusMinusSpArg extends InstructionArg {
   Iterable<MyToken> get tokens => [minusMinusToken, spToken];
 
   @override
-  String toString() => 'MinusMinusSpArg(minusMinusToken: $minusMinusToken, spToken: $spToken)';
+  String toString() => 'MinusMinusSp(minusMinusToken: $minusMinusToken, spToken: $spToken)';
 }
 
-class PeekArg extends InstructionArg {
-  const PeekArg(this.token);
+class Peek extends InstructionArg {
+  const Peek(this.token);
 
   final MyToken<String> token;
 
@@ -326,11 +312,11 @@ class PeekArg extends InstructionArg {
   Iterable<MyToken> get tokens => [token];
 
   @override
-  String toString() => 'PeekArg(token: $token)';
+  String toString() => 'Peek(token: $token)';
 }
 
-class PickArg extends InstructionArg {
-  const PickArg(this.pickToken, this.offset);
+class Pick extends InstructionArg {
+  const Pick(this.pickToken, this.offset);
 
   final MyToken<String> pickToken;
   final Term offset;
@@ -339,22 +325,22 @@ class PickArg extends InstructionArg {
   Iterable<MyToken> get tokens => [pickToken, ...offset.tokens];
 
   @override
-  String toString() => 'PickArg(pickToken: $pickToken, offset: $offset)';
+  String toString() => 'Pick(pickToken: $pickToken, offset: $offset)';
 }
 
 sealed class Term extends ASTNode implements InstructionArg {
   const Term();
 
-  const factory Term.literal(MyToken<int> value) = LiteralTerm;
-  const factory Term.label(LabelName label) = LabelTerm;
+  const factory Term.literal(MyToken<int> value) = Literal;
+  const factory Term.label(MyToken<String> label) = LabelTerm;
   const factory Term.binOp(Term lhs, MyToken<BinOp> op, Term rhs) = BinaryOpTerm;
   const factory Term.unaryOp(MyToken<UnaryOp> op, Term a) = UnaryOpTerm;
 
   Iterable<String> get symbolDependencies;
 }
 
-class LiteralTerm extends Term {
-  const LiteralTerm(this.value);
+class Literal extends Term {
+  const Literal(this.value);
 
   final MyToken<int> value;
 
@@ -365,19 +351,19 @@ class LiteralTerm extends Term {
   Iterable<String> get symbolDependencies => [];
 
   @override
-  String toString() => 'LiteralTerm(value: $value)';
+  String toString() => 'Literal(value: $value)';
 }
 
 class LabelTerm extends Term {
   const LabelTerm(this.label);
 
-  final LabelName label;
+  final MyToken<String> label;
 
   @override
-  Iterable<MyToken> get tokens => [...label.tokens];
+  Iterable<MyToken> get tokens => [label];
 
   @override
-  Iterable<String> get symbolDependencies => [label.name.value];
+  Iterable<String> get symbolDependencies => [label.value];
 
   @override
   String toString() => 'LabelTerm(label: $label)';
@@ -400,7 +386,7 @@ class BinaryOpTerm extends Term {
       ];
 
   @override
-  String toString() => 'BinOpTerm(op: $op, a: $lhs, b: $rhs)';
+  String toString() => 'BinaryOpTerm(op: $op, a: $lhs, b: $rhs)';
 }
 
 class UnaryOpTerm extends Term {

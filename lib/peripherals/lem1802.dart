@@ -7,8 +7,7 @@ import 'package:dcpu_flutter/core/memory.dart';
 import 'package:flutter/material.dart';
 
 class Glyph {
-  const Glyph({required this.first, required this.second})
-      : value = first << 16 | second;
+  const Glyph({required this.first, required this.second}) : value = first << 16 | second;
 
   static const width = 4;
   static const height = 8;
@@ -430,10 +429,7 @@ class Font extends Memory with ChangeNotifier {
     0x0200
   ];
 
-  final glyphs = [
-    for (var i = 0; i < rom.length; i += 2)
-      Glyph(first: rom[i], second: rom[i + 1])
-  ];
+  final glyphs = [for (var i = 0; i < rom.length; i += 2) Glyph(first: rom[i], second: rom[i + 1])];
 
   Glyph glyphFor(int characterCode) {
     assert(0 <= characterCode && characterCode <= maxCharCode);
@@ -520,14 +516,23 @@ class Palette extends Memory with ChangeNotifier {
 }
 
 class Lem1802Device extends HardwareDevice with ChangeNotifier {
-  @override
-  HardwareInfo get info => const HardwareInfo(
-        hardwareId: 0x7349f615,
-        version: 0x1802,
-        manufacturerId: 0x1c6c8b36,
-      );
+  Lem1802Device({required this.flags});
+
+  static const _defaultHardwareInfo = HardwareInfo(
+    hardwareId: 0x7349f615,
+    version: 0x1802,
+    manufacturerId: 0x1c6c8b36,
+  );
+
+  static const _alternativeHardwareInfo = HardwareInfo(
+    hardwareId: 0x7349f615,
+    version: 0x1802,
+    manufacturerId: 0x1c6c8b36,
+  );
 
   static const _splashDuration = Duration(seconds: 2);
+
+  final DcpuCompatibilityFlags flags;
 
   Timer? _blinkTimer;
   Timer? _splashTimer;
@@ -543,6 +548,9 @@ class Lem1802Device extends HardwareDevice with ChangeNotifier {
   final framebuffer = Framebuffer();
   final font = Font();
   final palette = Palette();
+
+  @override
+  HardwareInfo get info => flags.lemAlternativeHardwareId ? _alternativeHardwareInfo : _defaultHardwareInfo;
 
   void unmap(Dcpu cpu, int start, int length, Memory memory) {
     cpu.hardwareController.unmapDeviceMemory(

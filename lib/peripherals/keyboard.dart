@@ -45,8 +45,7 @@ int? toDcpuKey(
   return null;
 }
 
-LogicalKeyboardKey? toLogicalKey(int dcpuKey,
-    {bool swapArrowLeftRight = false}) {
+LogicalKeyboardKey? toLogicalKey(int dcpuKey, {bool swapArrowLeftRight = false}) {
   if (dcpuKey == 0x10) {
     return LogicalKeyboardKey.backspace;
   } else if (dcpuKey == 0x11) {
@@ -62,13 +61,9 @@ LogicalKeyboardKey? toLogicalKey(int dcpuKey,
   } else if (dcpuKey == 0x81) {
     return LogicalKeyboardKey.arrowDown;
   } else if (dcpuKey == 0x82) {
-    return swapArrowLeftRight
-        ? LogicalKeyboardKey.arrowLeft
-        : LogicalKeyboardKey.arrowRight;
+    return swapArrowLeftRight ? LogicalKeyboardKey.arrowLeft : LogicalKeyboardKey.arrowRight;
   } else if (dcpuKey == 0x83) {
-    return swapArrowLeftRight
-        ? LogicalKeyboardKey.arrowRight
-        : LogicalKeyboardKey.arrowLeft;
+    return swapArrowLeftRight ? LogicalKeyboardKey.arrowRight : LogicalKeyboardKey.arrowLeft;
   } else if (dcpuKey == 0x90) {
     return LogicalKeyboardKey.shift;
   } else if (dcpuKey == 0x91) {
@@ -81,11 +76,11 @@ LogicalKeyboardKey? toLogicalKey(int dcpuKey,
 class GenericKeyboard extends HardwareDevice {
   GenericKeyboard({
     required this.isKeyPressed,
-    this.swapArrowLeftRight = false,
+    required this.flags,
   });
 
   final bool Function(LogicalKeyboardKey) isKeyPressed;
-  final bool swapArrowLeftRight;
+  final DcpuCompatibilityFlags flags;
 
   @override
   HardwareInfo get info {
@@ -103,7 +98,7 @@ class GenericKeyboard extends HardwareDevice {
     final key = toDcpuKey(
       event.logicalKey,
       event.character,
-      swapArrowLeftRight: swapArrowLeftRight,
+      swapArrowLeftRight: flags.swapLeftAndRightArrowKeys,
     );
     if (key != null) {
       _keyQueue.add(key);
@@ -135,7 +130,7 @@ class GenericKeyboard extends HardwareDevice {
     late int c;
     final logicalKey = toLogicalKey(
       b,
-      swapArrowLeftRight: swapArrowLeftRight,
+      swapArrowLeftRight: flags.swapLeftAndRightArrowKeys,
     );
 
     if (logicalKey != null && isKeyPressed(logicalKey)) {

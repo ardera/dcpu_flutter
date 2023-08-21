@@ -4,7 +4,7 @@ import 'package:dcpu_flutter/core/math.dart';
 sealed class Instruction {
   const Instruction({required this.op});
 
-  static Instruction decode(int Function() readWord) {
+  static Instruction decode(int Function() readWord, {required DcpuCompatibilityFlags flags}) {
     final firstWord = readWord();
 
     final opcode = firstWord & 0x1f;
@@ -13,7 +13,7 @@ sealed class Instruction {
 
     if (opcode == 0) {
       // special opcode
-      final op = SpecialOp.decode(bEncoded);
+      final op = SpecialOp.decode(bEncoded, flags: flags);
       final a = Arg.decode(aEncoded, readWord);
       return SpecialInstruction(op: op, a: a);
     } else {
@@ -188,28 +188,28 @@ sealed class Op {
     b.write(state, result);
   }
 
-  void readBreadAwriteB(
+  void readAreadBwriteB(
     Dcpu state,
     Arg a,
     Arg b, {
     required int Function(int a, int b) compute,
   }) {
-    final bCaptured = b.read(state);
     final aCaptured = a.read(state);
+    final bCaptured = b.read(state);
 
     final result = compute(aCaptured, bCaptured);
 
     b.write(state, result);
   }
 
-  void readBreadAwriteBwriteEx(
+  void readAreadBwriteBwriteEx(
     Dcpu state,
     Arg a,
     Arg b, {
     required ({int b, int ex}) Function(int a, int b) compute,
   }) {
-    final bCaptured = b.read(state);
     final aCaptured = a.read(state);
+    final bCaptured = b.read(state);
 
     final result = compute(aCaptured, bCaptured);
 
@@ -217,40 +217,40 @@ sealed class Op {
     state.regs.ex = result.ex;
   }
 
-  void readBreadA(
+  void readAreadB(
     Dcpu state,
     Arg a,
     Arg b, {
     required void Function(int a, int b) compute,
   }) {
-    final bCaptured = b.read(state);
     final aCaptured = a.read(state);
+    final bCaptured = b.read(state);
 
     compute(aCaptured, bCaptured);
   }
 
-  void readBreadAwriteSkip(
+  void readAreadBwriteSkip(
     Dcpu state,
     Arg a,
     Arg b, {
     required bool Function(int a, int b) compute,
   }) {
-    final bCaptured = b.read(state);
     final aCaptured = a.read(state);
+    final bCaptured = b.read(state);
 
     final skip = compute(aCaptured, bCaptured);
 
     state.skip = skip;
   }
 
-  void readBreadAreadExwriteBwriteEx(
+  void readAreadBAreadEXwriteBwriteEX(
     Dcpu state,
     Arg a,
     Arg b, {
     required ({int b, int ex}) Function(int a, int b, int ex) compute,
   }) {
-    final bCaptured = b.read(state);
     final aCaptured = a.read(state);
+    final bCaptured = b.read(state);
     final exCaptured = state.regs.ex;
 
     final result = compute(aCaptured, bCaptured, exCaptured);
@@ -322,11 +322,24 @@ abstract class BranchingOp extends BasicOp {
 abstract class SpecialOp extends Op {
   const SpecialOp();
 
-  static SpecialOp decode(int opcode) {
-    return values.singleWhere(
+  static const _hlt = HltOp();
+  static const _brk = BrkOp();
+  static const _log = LogOp();
+
+  static SpecialOp decode(int opcode, {required DcpuCompatibilityFlags flags}) {
+    final op = values.singleWhere(
       (op) => op.matches(opcode),
-      orElse: () => throw throw IllegalBasicOpcodeException(opcode),
+      orElse: () => throw IllegalSpecialOpcodeException(opcode),
     );
+
+    switch (op) {
+      case HltOp() when !flags.enableHlt:
+      case BrkOp() when !flags.enableBrk:
+      case LogOp() when !flags.enableLog:
+        throw IllegalSpecialOpcodeException(opcode);
+      default:
+        return op;
+    }
   }
 
   void perform(Dcpu state, Arg a);
@@ -345,7 +358,9 @@ abstract class SpecialOp extends Op {
     HwnOp(),
     HwqOp(),
     HwiOp(),
-    HltOp(),
+    _hlt,
+    _brk,
+    _log
   ];
 }
 
@@ -372,7 +387,7 @@ class AddOp extends BasicOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteBwriteEx(
+    readAreadBwriteBwriteEx(
       state,
       a,
       b,
@@ -400,7 +415,7 @@ class SubOp extends BasicOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteBwriteEx(
+    readAreadBwriteBwriteEx(
       state,
       a,
       b,
@@ -428,7 +443,7 @@ class MulOp extends BasicOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteBwriteEx(
+    readAreadBwriteBwriteEx(
       state,
       a,
       b,
@@ -457,7 +472,7 @@ class MliOp extends BasicOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteBwriteEx(
+    readAreadBwriteBwriteEx(
       state,
       a,
       b,
@@ -490,7 +505,7 @@ class DivOp extends BasicOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteBwriteEx(
+    readAreadBwriteBwriteEx(
       state,
       a,
       b,
@@ -522,7 +537,7 @@ class DviOp extends BasicOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteBwriteEx(
+    readAreadBwriteBwriteEx(
       state,
       a,
       b,
@@ -557,7 +572,7 @@ class ModOp extends BasicOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteB(
+    readAreadBwriteB(
       state,
       a,
       b,
@@ -586,7 +601,7 @@ class MdiOp extends BasicOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteB(
+    readAreadBwriteB(
       state,
       a,
       b,
@@ -597,7 +612,7 @@ class MdiOp extends BasicOp {
           a = from16bitsigned(a);
           b = from16bitsigned(b);
 
-          return to16bit(b % a);
+          return to16bit(b.remainder(a));
         }
       },
     );
@@ -618,7 +633,7 @@ class AndOp extends BasicOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteB(
+    readAreadBwriteB(
       state,
       a,
       b,
@@ -643,7 +658,7 @@ class BorOp extends BasicOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteB(
+    readAreadBwriteB(
       state,
       a,
       b,
@@ -668,7 +683,7 @@ class XorOp extends BasicOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteB(
+    readAreadBwriteB(
       state,
       a,
       b,
@@ -693,7 +708,7 @@ class ShrOp extends BasicOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteBwriteEx(
+    readAreadBwriteBwriteEx(
       state,
       a,
       b,
@@ -721,7 +736,7 @@ class AsrOp extends BasicOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteBwriteEx(
+    readAreadBwriteBwriteEx(
       state,
       a,
       b,
@@ -751,7 +766,7 @@ class ShlOp extends BasicOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteBwriteEx(
+    readAreadBwriteBwriteEx(
       state,
       a,
       b,
@@ -779,7 +794,7 @@ class IfbOp extends BranchingOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteSkip(
+    readAreadBwriteSkip(
       state,
       a,
       b,
@@ -804,7 +819,7 @@ class IfcOp extends BranchingOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteSkip(
+    readAreadBwriteSkip(
       state,
       a,
       b,
@@ -829,7 +844,7 @@ class IfeOp extends BranchingOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteSkip(
+    readAreadBwriteSkip(
       state,
       a,
       b,
@@ -854,7 +869,7 @@ class IfnOp extends BranchingOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteSkip(
+    readAreadBwriteSkip(
       state,
       a,
       b,
@@ -879,7 +894,7 @@ class IfgOp extends BranchingOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteSkip(
+    readAreadBwriteSkip(
       state,
       a,
       b,
@@ -904,7 +919,7 @@ class IfaOp extends BranchingOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteSkip(
+    readAreadBwriteSkip(
       state,
       a,
       b,
@@ -932,7 +947,7 @@ class IflOp extends BranchingOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteSkip(
+    readAreadBwriteSkip(
       state,
       a,
       b,
@@ -957,7 +972,7 @@ class IfuOp extends BranchingOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAwriteSkip(
+    readAreadBwriteSkip(
       state,
       a,
       b,
@@ -985,7 +1000,7 @@ class AdxOp extends BasicOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAreadExwriteBwriteEx(
+    readAreadBAreadEXwriteBwriteEX(
       state,
       a,
       b,
@@ -1014,7 +1029,7 @@ class SbxOp extends BasicOp {
 
   @override
   void perform(Dcpu state, Arg a, Arg b) {
-    readBreadAreadExwriteBwriteEx(
+    readAreadBAreadEXwriteBwriteEX(
       state,
       a,
       b,
@@ -1189,9 +1204,9 @@ class IaqOp extends SpecialOp {
     final aCaptured = a.read(state);
 
     if (aCaptured == 0) {
-      state.interruptController.enableQueueing();
-    } else {
       state.interruptController.disableQueueing();
+    } else {
+      state.interruptController.enableQueueing();
     }
   }
 
@@ -1280,6 +1295,8 @@ class HwiOp extends SpecialOp {
 }
 
 class LogOp extends SpecialOp {
+  const LogOp();
+
   @override
   int get cycles => 1;
 
@@ -1297,6 +1314,8 @@ class LogOp extends SpecialOp {
 }
 
 class BrkOp extends SpecialOp {
+  const BrkOp();
+
   @override
   int get cycles => 1;
 
@@ -1327,8 +1346,7 @@ class HltOp extends SpecialOp {
 
   @override
   void perform(Dcpu state, Arg a) {
-    // TODO: Implement
-    throw UnimplementedError();
+    state.halted = true;
   }
 }
 

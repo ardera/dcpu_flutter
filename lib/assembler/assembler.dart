@@ -42,27 +42,27 @@ class AssemblyWriter {
 
   var offset = 0x0000;
 
-  void emitAndAdvance(Iterable<int> bytes) {
-    _words.setAll(offset, bytes);
-    offset += bytes.length;
+  void emitAndAdvance(Iterable<int> words) {
+    _words.setAll(offset, words);
+    offset += words.length;
   }
 
-  void advance(int bytes) {
-    offset += bytes;
+  void advance(int words) {
+    offset += words;
   }
 
-  void emitAt(Iterable<int> bytes, int address) {
-    final overwriting = _words.getRange(address, address + bytes.length).any((byte) => byte != null);
+  void emitAt(Iterable<int> words, int address) {
+    final overwriting = _words.getRange(address, address + words.length).any((byte) => byte != null);
     if (overwriting) {
-      throw StateError('Double-write of bytes at $address');
+      throw StateError('Double-write of words at $address');
     }
 
-    _words.setAll(address, bytes);
+    _words.setAll(address, words);
   }
 
-  void reserve(int bytes) {
-    _words.fillRange(offset, offset + bytes, 0);
-    offset += bytes;
+  void reserve(int words) {
+    _words.fillRange(offset, offset + words, 0);
+    offset += words;
   }
 
   List<int> toWords() {
@@ -128,15 +128,24 @@ abstract class AssemblyContext {
 class RootAssemblyContext extends AssemblyContext {
   RootAssemblyContext(this.includeSearchPaths);
 
+  var _currentGlobalLabel = '';
   final _labels = <String, int>{};
   final _constants = <String, int>{};
   final _macros = <String, MacroDefinition>{};
 
   final List<Directory> includeSearchPaths;
 
+  String resolveName(String name) {
+    if (name.startsWith('.')) {
+      return '$_currentGlobalLabel$name';
+    } else {
+      return name;
+    }
+  }
+
   @override
   int? lookupLabel(String name) {
-    return _labels[name];
+    return _labels[resolveName(name)];
   }
 
   @override
@@ -161,7 +170,11 @@ class RootAssemblyContext extends AssemblyContext {
 
   @override
   void defineLabel(String name, int value) {
-    _labels[name] = value;
+    _labels[resolveName(name)] = value;
+
+    if (!name.startsWith('.')) {
+      _currentGlobalLabel = name;
+    }
   }
 
   @override
@@ -188,6 +201,7 @@ class RootAssemblyContext extends AssemblyContext {
   CapturedAssemblyContext capture() {
     return CapturedAssemblyContext(
       base: this,
+      currentGlobalLabel: _currentGlobalLabel,
       capturedMacros: Map.of(_macros),
       capturedConstants: Map.of(_constants),
     );
@@ -197,16 +211,27 @@ class RootAssemblyContext extends AssemblyContext {
 class CapturedAssemblyContext extends AssemblyContext {
   CapturedAssemblyContext({
     required AssemblyContext base,
+    required String currentGlobalLabel,
     required Map<String, MacroDefinition> capturedMacros,
     required Map<String, int> capturedConstants,
   })  : _base = base,
+        _capturedCurrentGlobalLabel = currentGlobalLabel,
         _capturedMacros = capturedMacros,
         _capturedConstants = capturedConstants;
 
   final AssemblyContext _base;
 
+  final String _capturedCurrentGlobalLabel;
   final Map<String, MacroDefinition> _capturedMacros;
   final Map<String, int> _capturedConstants;
+
+  String resolveName(String name) {
+    if (name.startsWith('.')) {
+      return '$_capturedCurrentGlobalLabel$name';
+    } else {
+      return name;
+    }
+  }
 
   @override
   int? lookupConstant(String name) {
@@ -215,7 +240,7 @@ class CapturedAssemblyContext extends AssemblyContext {
 
   @override
   int? lookupLabel(String name) {
-    return _base.lookupLabel(name);
+    return _base.lookupLabel(resolveName(name));
   }
 
   @override
@@ -337,8 +362,8 @@ class UnassembledTerm extends Unassembled<int> {
     assert(canAssemble(context));
 
     final value = switch (term) {
-      LiteralTerm(value: MyToken(:final value)) => value,
-      LabelTerm(label: LabelName(name: MyToken<String>(value: final label))) => context.lookupSymbol(label)!,
+      Literal(value: MyToken(:final value)) => value,
+      LabelTerm(label: MyToken<String>(value: final label)) => context.lookupSymbol(label)!,
       BinaryOpTerm(
         :final lhs,
         op: MyToken<BinOp>(value: BinOp.add),
@@ -444,11 +469,15 @@ class UnassembledIndirectImmediateArg extends UnassembledDepending<dcpu.Indirect
 sealed class UnassembledInstruction extends UnassembledDepending<dcpu.Instruction, dcpu.Arg> {
   const UnassembledInstruction();
 
+  Instruction get ast;
   dcpu.Op get opcode;
 }
 
 class UnassembledBasicInstruction extends UnassembledInstruction {
-  const UnassembledBasicInstruction(this.opcode, this.b, this.a);
+  const UnassembledBasicInstruction(this.ast, this.opcode, this.b, this.a);
+
+  @override
+  final Instruction ast;
 
   @override
   final dcpu.BasicOp opcode;
@@ -480,7 +509,10 @@ class UnassembledBasicInstruction extends UnassembledInstruction {
 }
 
 class UnassembledSpecialInstruction extends UnassembledInstruction {
-  const UnassembledSpecialInstruction(this.opcode, this.a);
+  const UnassembledSpecialInstruction(this.ast, this.opcode, this.a);
+
+  @override
+  final Instruction ast;
 
   @override
   final dcpu.SpecialOp opcode;
@@ -506,8 +538,8 @@ class UnassembledSpecialInstruction extends UnassembledInstruction {
   dcpu.Instruction get substitute => dcpu.SpecialInstruction(op: opcode, a: a.substituteOrValue);
 }
 
-class UnassembledInstructionBytes extends UnassembledDepending<Iterable<int>, dcpu.Instruction> {
-  const UnassembledInstructionBytes(this.instruction);
+class UnassembledInstructionWords extends UnassembledDepending<Iterable<int>, dcpu.Instruction> {
+  const UnassembledInstructionWords(this.instruction);
 
   final Unassembled<dcpu.Instruction> instruction;
 
@@ -522,6 +554,23 @@ class UnassembledInstructionBytes extends UnassembledDepending<Iterable<int>, dc
       AssemblyContext context, Iterable<Assembled<dcpu.Instruction>> resolvedDeps) {
     return Assembled(resolvedDeps.single.value.encode());
   }
+}
+
+class UnassembledDataWords extends UnassembledDepending<Iterable<int>, int> {
+  UnassembledDataWords(this.value);
+
+  final Unassembled<int> value;
+
+  @override
+  Assembled<Iterable<int>> assembleWithDeps(AssemblyContext context, Iterable<Assembled<int>> resolvedDeps) {
+    return Assembled([resolvedDeps.first.value], resolvedDeps.first.symbolDependencies.toList());
+  }
+
+  @override
+  Iterable<MaybeUnassembled<int>> get dependencies => [value];
+
+  @override
+  Iterable<int> get substitute => [0];
 }
 
 sealed class Assembled<T> extends MaybeUnassembled<T> {
@@ -568,13 +617,13 @@ MaybeUnassembled<dcpu.Arg> assembleArg(
     case IndirectArg(child: RegisterArg(:final register)):
       return Assembled(dcpu.IndirectRegisterArg(register.value));
 
-    case RegisterOffsetArg arg:
+    case RegisterOffset arg:
       throw SemanticError(
         arg.location,
         'Direct Register + Immediate arguments are not supported by DCPU-16.',
       );
 
-    case IndirectArg(child: RegisterOffsetArg(:final register, :final offsetOp, :final offset)):
+    case IndirectArg(child: RegisterOffset(:final register, :final offsetOp, :final offset)):
       final summand = switch (offsetOp.value) {
         BinOp.add => offset,
         BinOp.sub => Term.unaryOp(
@@ -604,13 +653,13 @@ MaybeUnassembled<dcpu.Arg> assembleArg(
         return unassembled;
       }
 
-    case SpPlusPlusArg(:final location):
+    case SpPlusPlus(:final location):
       throw SemanticError(
         location,
         'SP++ is only supported in indirect addressing ([SP++])',
       );
 
-    case IndirectArg(child: SpPlusPlusArg(), :final location):
+    case IndirectArg(child: SpPlusPlus(), :final location):
       return switch (isA) {
         true => const Assembled(dcpu.PushPopArg()),
         false => throw SemanticError(
@@ -619,7 +668,7 @@ MaybeUnassembled<dcpu.Arg> assembleArg(
           )
       };
 
-    case PopArg(:final location):
+    case Pop(:final location):
       return switch (isA) {
         true => const Assembled(dcpu.PushPopArg()),
         false => throw SemanticError(
@@ -628,19 +677,19 @@ MaybeUnassembled<dcpu.Arg> assembleArg(
           )
       };
 
-    case IndirectArg(child: PopArg(:final location)):
+    case IndirectArg(child: Pop(:final location)):
       throw SemanticError(
         location,
         'POP is only supported with direct addressing.',
       );
 
-    case MinusMinusSpArg(:final location):
+    case MinusMinusSp(:final location):
       throw SemanticError(
         location,
         '--SP is only supported in indirect addressing ([--SP])',
       );
 
-    case IndirectArg(child: MinusMinusSpArg(:final location)):
+    case IndirectArg(child: MinusMinusSp(:final location)):
       return switch (isA) {
         true => throw SemanticError(
             location,
@@ -649,7 +698,7 @@ MaybeUnassembled<dcpu.Arg> assembleArg(
         false => const Assembled(dcpu.PushPopArg()),
       };
 
-    case PushArg(:final location):
+    case Push(:final location):
       return switch (isA) {
         true => throw SemanticError(
             location,
@@ -658,24 +707,24 @@ MaybeUnassembled<dcpu.Arg> assembleArg(
         false => const Assembled(dcpu.PushPopArg()),
       };
 
-    case IndirectArg(child: PushArg(:final location)):
+    case IndirectArg(child: Push(:final location)):
       throw SemanticError(
         location,
         'PUSH / [--SP] is only supported with direct addressing.',
       );
 
-    case PeekArg():
+    case Peek():
       return const Assembled(
         dcpu.IndirectRegisterArg(Register.sp),
       );
 
-    case IndirectArg(child: PeekArg(:final location)):
+    case IndirectArg(child: Peek(:final location)):
       throw SemanticError(
         location,
         'Indirect PEEK is not supported. (i.e. [PEEK])',
       );
 
-    case PickArg(:final offset):
+    case Pick(:final offset):
       final unassembled = UnassembledIndirectRegisterImmediateArg(
         Register.sp,
         UnassembledTerm(offset),
@@ -687,7 +736,7 @@ MaybeUnassembled<dcpu.Arg> assembleArg(
         return unassembled;
       }
 
-    case IndirectArg(child: PickArg(:final location)):
+    case IndirectArg(child: Pick(:final location)):
       throw SemanticError(
         location,
         'Indirect PICK is not supported. (i.e. [PICK 1])',
@@ -737,8 +786,8 @@ MaybeUnassembled<dcpu.Arg> assembleArg(
 
 MaybeUnassembled<dcpu.Instruction> assembleInstruction(Instruction ast, {required AssemblyContext context}) {
   final name = ast.mnemonic;
-  final astA = ast.argA;
-  final astB = ast.argB;
+  final astA = ast.a;
+  final astB = ast.b;
 
   // assemble the opcode.
   final op = dcpu.Op.values.singleWhere(
@@ -770,10 +819,10 @@ MaybeUnassembled<dcpu.Instruction> assembleInstruction(Instruction ast, {require
     ) =>
       Assembled(dcpu.BasicInstruction(op: op, b: b, a: a), [...depsB, ...depsA]),
     (dcpu.BasicOp op, MaybeUnassembled<dcpu.Arg> b, MaybeUnassembled<dcpu.Arg> a) =>
-      UnassembledBasicInstruction(op, b, a),
+      UnassembledBasicInstruction(ast, op, b, a),
     (dcpu.SpecialOp op, null, Assembled<dcpu.Arg>(value: final a, symbolDependencies: final deps)) =>
       Assembled(dcpu.SpecialInstruction(op: op, a: a), deps.toList()),
-    (dcpu.SpecialOp op, null, Unassembled<dcpu.Arg> a) => UnassembledSpecialInstruction(op, a),
+    (dcpu.SpecialOp op, null, Unassembled<dcpu.Arg> a) => UnassembledSpecialInstruction(ast, op, a),
     (dcpu.SpecialOp(), _, _) => throw SemanticError(
         Location.fromToken(name),
         'Single parameter expected for special opcode',
@@ -794,14 +843,20 @@ MaybeUnassembled<dcpu.Instruction> assembleInstruction(Instruction ast, {require
 
 class FeatureFlags {
   const FeatureFlags({
-    this.logBrkHltInstructions = true,
+    this.allowLogBrkHltInstructions = true,
+    this.allowInstructionArgsWithoutComma = true,
+    this.allowTrailingCommaInPseudoInstructionArgs = true,
   });
 
   static const def = FeatureFlags();
 
   // Parse and assemble LOG, BRK and HLT instructions
   // supported by tech-compliant DCPU
-  final bool logBrkHltInstructions;
+  final bool allowLogBrkHltInstructions;
+
+  final bool allowInstructionArgsWithoutComma;
+
+  final bool allowTrailingCommaInPseudoInstructionArgs;
 }
 
 class Assembler {
@@ -811,6 +866,22 @@ class Assembler {
   final FeatureFlags features;
   final Dasm16ParserDefinition parserDefinition;
   late final parser = parserDefinition.buildFrom(parserDefinition.start());
+
+  static const knownPseudoOps = <(String, {bool prefix})>{
+    ('org', prefix: true),
+    ('fill', prefix: true),
+    ('reserve', prefix: true),
+    ('include', prefix: true),
+    ('symbol', prefix: true),
+    ('sym', prefix: true),
+    ('equ', prefix: true),
+    ('set', prefix: true),
+    ('define', prefix: true),
+    ('def', prefix: true),
+    ('undef', prefix: true),
+    ('dat', prefix: true),
+    ('dat', prefix: false),
+  };
 
   AssemblyFile parse(String input, String inputName) {
     logger.finer('PARSING');
@@ -845,17 +916,17 @@ class Assembler {
   }
 
   void logEmittedInstruction(Assembled<dcpu.Instruction> instruction) {
-    final bytes = instruction.value.encode();
+    final words = instruction.value.encode();
 
     final disassembly = instruction.value.disassemble();
-    final bytesStr = bytes.map(hexstring).join(', ');
+    final wordsStr = words.map(hexstring).join(', ');
     final depsStr = switch (instruction.symbolDependencies) {
       Iterable(isEmpty: true) => 'none',
       Iterable deps => deps.join(', '),
     };
 
     logger.info(
-      'EMIT $bytesStr  ($disassembly, deps: $depsStr)',
+      'EMIT $wordsStr  ($disassembly, deps: $depsStr)',
     );
   }
 
@@ -863,7 +934,7 @@ class Assembler {
     Instruction ast, {
     required RootAssemblyContext context,
     required AssemblyWriter writer,
-    required List<(Unassembled<dcpu.Instruction>, CapturedAssemblyContext, int)> unassembled,
+    required List<(Unassembled<Iterable<int>>, CapturedAssemblyContext, int)> unassembled,
   }) {
     final assembled = assembleInstruction(ast, context: context);
 
@@ -877,32 +948,32 @@ class Assembler {
         // where it should be put once assembled, so we can resolve it
         // later.
 
-        unassembled.add((instruction, context.capture(), writer.offset));
+        unassembled.add((UnassembledInstructionWords(instruction), context.capture(), writer.offset));
 
-        final instrBytes = instruction.substitute.encode().length;
+        final instrWords = instruction.substitute.encode().length;
 
         logger.info(
-          'OFFSET += $instrBytes  (Unassembled ${assembled.substituteOrValue.op} instruction)',
+          'OFFSET += $instrWords  (Unassembled ${assembled.substituteOrValue.op} instruction)',
         );
 
-        writer.advance(instrBytes);
+        writer.advance(instrWords);
       case Assembled<dcpu.Instruction> instruction:
         // Instruction was successfully assembled/resolved.
-        // We can emit the final bytes directly.
+        // We can emit the final words directly.
 
-        final instrBytes = instruction.value.encode();
+        final instrWords = instruction.value.encode();
 
         logEmittedInstruction(instruction);
 
-        writer.emitAndAdvance(instrBytes);
+        writer.emitAndAdvance(instrWords);
     }
   }
 
-  void invokeMacro(
+  void expandMacro(
     MacroInvocation ast, {
     required RootAssemblyContext context,
     required AssemblyWriter writer,
-    required List<(Unassembled<dcpu.Instruction>, CapturedAssemblyContext, int)> unassembled,
+    required List<(Unassembled<Iterable<int>>, CapturedAssemblyContext, int)> unassembled,
   }) {
     logger.info('MACRO ${ast.name.value}');
 
@@ -930,204 +1001,222 @@ class Assembler {
     };
   }
 
-  Iterable<(Unassembled<dcpu.Instruction>, CapturedAssemblyContext, int)> firstPass(
+  void assemblePseudoOp(
+    PseudoInstr ast, {
+    required RootAssemblyContext context,
+    required AssemblyWriter writer,
+    required List<(Unassembled<Iterable<int>>, CapturedAssemblyContext, int)> unassembled,
+  }) {
+    final name = ast.name.value.toLowerCase();
+    final args = ast.args.elements;
+
+    final nameWithPrefix = (ast.prefix?.value ?? '') + ast.name.value;
+
+    switch (name.toLowerCase()) {
+      case 'org':
+        final value = switch (args) {
+          [NameOrTerm(:final Term term)] => evaluateTerm(term, context: context),
+          _ => throw SemanticError(
+              args.first.location,
+              '.org directive expects a name/literal/term argument',
+            ),
+        };
+
+        logger.info('ORG := ${hexstring(value)}');
+        writer.offset = value;
+
+      case 'fill':
+        final (value, length) = switch (args) {
+          [NameOrTerm(term: final Term value), NameOrTerm(term: final Term length)] => (
+              evaluateTerm(value, context: context),
+              evaluateTerm(length, context: context),
+            ),
+          _ => throw SemanticError(
+              args.first.location,
+              '.fill directive expects exactly two name/literal/term arguments',
+            ),
+        };
+
+        logger.info('[${hexstring(writer.offset)}..${hexstring(writer.offset + length - 1)}] := ${hexstring(value)}');
+        writer.emitAndAdvance(List.filled(length, value));
+
+      case 'reserve':
+        final value = switch (args) {
+          [NameOrTerm(:final Term term)] => evaluateTerm(term, context: context),
+          _ => throw SemanticError(
+              ast.location,
+              '.reserve directive expects exactly one name/literal/term argument',
+            )
+        };
+
+        logger.info('ORG += ${hexstring(value)}');
+        writer.reserve(value);
+
+      case 'include':
+        final path = switch (args) {
+          [PackedString(flags: [], orValue: null, string: MyToken<String>(value: final path))] => path,
+          _ => throw SemanticError(
+              args.first.location,
+              '.include expects exactly one string as argument',
+            ),
+        };
+
+        final included = context.resolveInclude(path);
+        logger.info('INCLUDE ${included.name}');
+
+        final parsed = parse(included.contents, included.name);
+        final additionalUnassembled = firstPass(
+          parsed.nodes,
+          context: context,
+          writer: writer,
+        );
+
+        unassembled.addAll(additionalUnassembled);
+
+      case 'symbol':
+      case 'sym':
+      case 'equ':
+      case 'set':
+      case 'define':
+      case 'def':
+        final (name, value) = switch (args) {
+          [var name, var value] => (
+              switch (name) {
+                NameOrTerm(name: MyToken<String>(value: final name)) => name,
+                _ => throw SemanticError(
+                    name.location,
+                    '$nameWithPrefix expects an identifier as it\'s first argument',
+                  ),
+              },
+              switch (value) {
+                NameOrTerm(term: final Term term) => evaluateTerm(term, context: context),
+                _ => throw SemanticError(
+                    value.location,
+                    '$nameWithPrefix expects an identifier/number/term as it\'s second argument',
+                  ),
+              }
+            ),
+          _ => throw SemanticError(
+              ast.location,
+              '$nameWithPrefix expects exactly two arguments.',
+            ),
+        };
+
+        logger.info('LET CONST $name := $value');
+        context.defineConstant(name, value);
+
+      case 'undef':
+        final name = switch (args) {
+          [NameOrTerm(name: MyToken<String>(value: final name))] => name,
+          _ => throw SemanticError(
+              args.first.location,
+              '$nameWithPrefix expects exactly one identifier as it\'s second argument.',
+            ),
+        };
+
+        logger.info('LET CONST $name := nil');
+        context.undefConstant(name);
+
+      case 'dat':
+        for (final arg in args) {
+          switch (arg) {
+            case NameOrTerm(:final Term term):
+              final value = assembleTerm(term, context: context);
+              switch (value) {
+                case Assembled<int>(:final value):
+                  logger.info('[${hexstring(writer.offset)}] := ${hexstring(value)}');
+                  writer.emitAndAdvance([value]);
+
+                case Unassembled<int> value:
+                  final words = UnassembledDataWords(value);
+                  unassembled.add((words, context.capture(), writer.offset));
+
+                  writer.advance(words.substitute.length);
+              }
+
+            case PackedString(string: MyToken<String>(value: final string)):
+              final words = ascii.encode(string);
+              logger.info(
+                '[${hexstring(writer.offset)}..${hexstring(writer.offset + words.length - 1)}] := "$string"',
+              );
+
+              writer.emitAndAdvance(words);
+
+            default:
+              throw UnimplementedError();
+          }
+        }
+
+      default:
+        throw SemanticError(Location.fromToken(ast.name), 'Unknown pseudo-instruction');
+    }
+  }
+
+  Iterable<(Unassembled<Iterable<int>>, CapturedAssemblyContext, int)> firstPass(
     Iterable<TopLevelASTNode> nodes, {
     required RootAssemblyContext context,
     required AssemblyWriter writer,
   }) {
     logger.info('ASSEMBLING - FIRST PASS');
 
-    final unassembled = <(Unassembled<dcpu.Instruction>, CapturedAssemblyContext, int)>[];
+    final unassembled = <(Unassembled<Iterable<int>>, CapturedAssemblyContext, int)>[];
 
     for (final node in nodes) {
       switch (node) {
-        case DotInstruction(name: MyToken<String>(value: var name), args: SeparatedList(elements: final args)):
-          switch (name.toLowerCase()) {
-            case 'org':
-              final value = switch (args) {
-                [NameOrTerm(:final Term term)] => evaluateTerm(term, context: context),
-                _ => throw SemanticError(
-                    args.first.location,
-                    '.org directive expects a name/literal/term argument',
-                  ),
-              };
-
-              logger.info('ORG := ${hexstring(value)}');
-              writer.offset = value;
-
-            case 'fill':
-              final (value, length) = switch (args) {
-                [NameOrTerm(term: final Term value), NameOrTerm(term: final Term length)] => (
-                    evaluateTerm(value, context: context),
-                    evaluateTerm(length, context: context),
-                  ),
-                _ => throw SemanticError(
-                    args.first.location,
-                    '.fill directive expects exactly two name/literal/term arguments',
-                  ),
-              };
-
-              logger.info(
-                  '[${hexstring(writer.offset)}..${hexstring(writer.offset + length - 1)}] := ${hexstring(value)}');
-              writer.emitAndAdvance(List.filled(length, value));
-
-            case 'reserve':
-              final value = switch (args) {
-                [NameOrTerm(:final Term term)] => evaluateTerm(term, context: context),
-                _ => throw SemanticError(
-                    node.location,
-                    '.reserve directive expects exactly one name/literal/term argument',
-                  )
-              };
-
-              logger.info('ORG += ${hexstring(value)}');
-              writer.reserve(value);
-
-            case 'include':
-              final path = switch (args) {
-                [PackedString(flags: [], orValue: null, string: MyToken<String>(value: final path))] => path,
-                _ => throw SemanticError(
-                    args.first.location,
-                    '.include expects exactly one string as argument',
-                  ),
-              };
-
-              final included = context.resolveInclude(path);
-              logger.info('INCLUDE ${included.name}');
-
-              final parsed = parse(included.contents, included.name);
-              final additionalUnassembled = firstPass(
-                parsed.nodes,
-                context: context,
-                writer: writer,
-              );
-
-              unassembled.addAll(additionalUnassembled);
-
-            case 'symbol':
-            case 'sym':
-            case 'equ':
-            case 'set':
-            case 'define':
-            case 'def':
-              final directiveName = node.name.value.toLowerCase();
-
-              final (name, value) = switch (args) {
-                [var name, var value] => (
-                    switch (name) {
-                      NameOrTerm(name: MyToken<String>(value: final name)) => name,
-                      _ => throw SemanticError(
-                          name.location,
-                          '.$directiveName expects an identifier as it\'s first argument',
-                        ),
-                    },
-                    switch (value) {
-                      NameOrTerm(term: final Term term) => evaluateTerm(term, context: context),
-                      _ => throw SemanticError(
-                          value.location,
-                          '.$directiveName expects an identifier/number/term as it\'s second argument',
-                        ),
-                    }
-                  ),
-                _ => throw SemanticError(
-                    node.location,
-                    '$directiveName expects exactly two arguments.',
-                  ),
-              };
-
-              logger.info('LET CONST $name := $value');
-              context.defineConstant(name, value);
-
-            case 'undef':
-              final name = switch (args) {
-                [NameOrTerm(name: MyToken<String>(value: final name))] => name,
-                _ => throw SemanticError(
-                    args.first.location,
-                    '.${node.name.value.toLowerCase()} expects exactly one identifier as it\'s second argument.',
-                  ),
-              };
-
-              logger.info('LET CONST $name := nil');
-              context.undefConstant(name);
-
-            case 'dat':
-              for (final arg in args) {
-                switch (arg) {
-                  case NameOrTerm(:final Term term):
-                    final value = evaluateTerm(term, context: context);
-                    logger.info('[${hexstring(writer.offset)}] := ${hexstring(value)}');
-
-                    writer.emitAndAdvance([value]);
-
-                  case PackedString(string: MyToken<String>(value: final string)):
-                    final words = ascii.encode(string);
-                    logger.info(
-                      '[${hexstring(writer.offset)}..${hexstring(writer.offset + words.length - 1)}] := "$string"',
-                    );
-
-                    writer.emitAndAdvance(words);
-
-                  default:
-                    throw UnimplementedError();
-                }
-              }
-
-            default:
-              throw SemanticError(Location.fromToken(node.name), 'Unknown pseudo-instruction');
-          }
+        case PseudoInstr ast:
+          assemblePseudoOp(
+            ast,
+            context: context,
+            writer: writer,
+            unassembled: unassembled,
+          );
 
         case MacroDefinition(name: MyToken<String>(value: final name)):
           logger.info('LET MACRO $name := $node');
           context.defineMacro(name, node);
 
-        case MacroInvocation macro:
-          if (!context.macroDefined(macro.name.value)) {
-            throw SemanticError(macro.location, 'Invocation of undefined macro ${macro.name.value}');
+        case InstrOrMacroOrPseudoInstr node:
+          switch (node) {
+            case InstrOrMacroOrPseudoInstr(macroInvocation: final MacroInvocation macro)
+                when context.macroDefined(macro.name.value):
+              expandMacro(
+                macro,
+                context: context,
+                writer: writer,
+                unassembled: unassembled,
+              );
+
+            case InstrOrMacroOrPseudoInstr(pseudoInstruction: final PseudoInstr instr)
+                when knownPseudoOps.contains((instr.name.value.toLowerCase(), prefix: instr.prefix != null)):
+              assemblePseudoOp(
+                instr,
+                context: context,
+                writer: writer,
+                unassembled: unassembled,
+              );
+
+            case InstrOrMacroOrPseudoInstr(instruction: final Instruction instr)
+                when dcpu.Op.values.any((op) => op.mnemonic.toUpperCase() == instr.mnemonic.value.toUpperCase()):
+              assembleAndEmitInstruction(
+                instr,
+                writer: writer,
+                context: context,
+                unassembled: unassembled,
+              );
+
+            default:
+              throw SemanticError(
+                Location.fromToken(
+                    node.macroInvocation?.name ?? node.pseudoInstruction?.name ?? node.instruction!.mnemonic),
+                'Unknown macro, pseudo-op or opcode',
+              );
           }
 
-          invokeMacro(
-            macro,
-            context: context,
-            writer: writer,
-            unassembled: unassembled,
-          );
-
-        case InstructionOrMacroInvocation(:final macroInvocation, instruction: final instr):
-          final opIsKnown = dcpu.Op.values.any(
-            (op) => op.mnemonic.toUpperCase() == instr.mnemonic.value.toUpperCase(),
-          );
-
-          if (context.macroDefined(macroInvocation.name.value)) {
-            invokeMacro(
-              macroInvocation,
-              context: context,
-              writer: writer,
-              unassembled: unassembled,
-            );
-          } else if (opIsKnown) {
-            assembleAndEmitInstruction(
-              instr,
-              writer: writer,
-              context: context,
-              unassembled: unassembled,
-            );
-          } else {
-            throw SemanticError(instr.location, 'Unknown macro or opcode');
-          }
-
-        case LabelDeclaration(name: LabelName(name: MyToken<String>(value: final name))):
+        case LabelDeclaration(name: MyToken<String>(value: final name)):
 
           // Save the symbol in our context.
           Logger.root.info('LET LABEL $name := ${hexstring(writer.offset)}');
           context.defineLabel(name, writer.offset);
-
-        case Instruction instr:
-          assembleAndEmitInstruction(
-            instr,
-            writer: writer,
-            context: context,
-            unassembled: unassembled,
-          );
       }
     }
 
@@ -1155,18 +1244,33 @@ class Assembler {
     for (final (instr, context, offset) in unassembled) {
       if (!instr.canAssemble(context)) {
         final unmetDeps = instr.symbolDependencies.where((symbol) => !context.symbolDefined(symbol));
-        logger.severe('Could not assemble instruction in 2nd pass, unmet symbol dependencies: ${unmetDeps.join(', ')}');
+
+        if (instr case UnassembledInstructionWords(instruction: UnassembledInstruction(:final ast))) {
+          throw SemanticError(
+            ast.location,
+            'Could not assemble instruction in 2nd pass. Unmet symbol dependencies: ${unmetDeps.join(', ')}',
+          );
+        } else if (instr case UnassembledDataWords(value: UnassembledTerm(term: final ast))) {
+          throw SemanticError(
+            ast.location,
+            'Could not assemble data in 2nd pass. Unmet symbol dependencies: ${unmetDeps.join(', ')}',
+          );
+        }
       } else {
         final assembled = instr.assemble(context);
 
-        final instrBytes = assembled.value.encode();
-        if (instrBytes.length != instr.substitute.encode().length) {
-          throw StateError('Assembled instruction length differs from unassembled substitute');
+        final instrWords = assembled.value;
+        if (instrWords.length != instr.substitute.length) {
+          throw StateError('Assembled instruction/data length differs from unassembled substitute');
         }
 
-        logEmittedInstruction(assembled);
+        if (instr case UnassembledInstructionWords(:final instruction)) {
+          logEmittedInstruction(instruction.assemble(context));
+        } else if (instr case UnassembledDataWords(:final value)) {
+          logger.info('[${hexstring(writer.offset)}] := ${hexstring(value.assemble(context).value)}');
+        }
 
-        writer.emitAt(instrBytes, offset);
+        writer.emitAt(instrWords, offset);
       }
     }
 

@@ -194,14 +194,9 @@ class _MyHomePageState extends State<MyHomePage> {
 
     dcpu = Dcpu(compatibilityFlags: flags);
 
-    dcpu.hardwareController.addDevice(Lem1802Device());
-    dcpu.hardwareController.addDevice(GenericClock());
-    dcpu.hardwareController.addDevice(
-      GenericKeyboard(
-        isKeyPressed: isKeyPressed,
-        swapArrowLeftRight: true,
-      ),
-    );
+    dcpu.hardwareController.addDevice(Lem1802Device(flags: flags));
+    dcpu.hardwareController.addDevice(GenericClock(flags: flags));
+    dcpu.hardwareController.addDevice(GenericKeyboard(isKeyPressed: isKeyPressed, flags: flags));
 
     fetchStats();
 
@@ -210,16 +205,13 @@ class _MyHomePageState extends State<MyHomePage> {
     } else if (assetKey != null) {
       final data = await DefaultAssetBundle.of(context).load(assetKey);
 
-      final bytes =
-          data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+      final bytes = data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
 
       dcpu.loadBytes(bytes);
     } else {
-      final data = await DefaultAssetBundle.of(context)
-          .load('assets/binaries/clock.bin');
+      final data = await DefaultAssetBundle.of(context).load('assets/binaries/clock.bin');
 
-      final bytes =
-          data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+      final bytes = data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
 
       dcpu.loadBytes(bytes);
     }
@@ -245,8 +237,7 @@ class _MyHomePageState extends State<MyHomePage> {
       decodedInstructions = dcpu.decodedInstructions;
       executedInstructions = dcpu.executedInstructions;
       cycles = dcpu.cycles;
-      realtimeFactor =
-          elapsedRealtime.inMicroseconds / elapsedCpuTime.inMicroseconds;
+      realtimeFactor = elapsedRealtime.inMicroseconds / elapsedCpuTime.inMicroseconds;
     }
 
     if (mounted) {
@@ -264,7 +255,7 @@ class _MyHomePageState extends State<MyHomePage> {
     final timer = Timer.periodic(
       const Duration(microseconds: 1000000 ~/ 60),
       (timer) {
-        dcpu.executeCpuTime(oneFrame);
+        dcpu.executeCpuTime(oneFrame, disassemble: disassemble);
         fetchStats();
       },
     );
@@ -285,7 +276,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   void runOneDcpuSecond() {
-    dcpu.executeCpuTime(const Duration(seconds: 1));
+    dcpu.executeCpuTime(const Duration(seconds: 1), disassemble: disassemble);
     fetchStats();
   }
 
@@ -445,8 +436,7 @@ class _MyHomePageState extends State<MyHomePage> {
                         return KeyEventResult.handled;
                       }
 
-                      final keyboard =
-                          dcpu.hardwareController.findDevice<GenericKeyboard>();
+                      final keyboard = dcpu.hardwareController.findDevice<GenericKeyboard>();
 
                       if (keyboard != null) {
                         debugPrint('onKeyEvent: $event');

@@ -206,10 +206,66 @@ class DcpuCompatibilityFlags {
   const DcpuCompatibilityFlags({
     this.fileLoadEndian = Endian.little,
     this.memoryBehaviour = DeviceMemoryBehaviour.mapped,
+    this.clockQueryReportsTicksToLastEnable = true,
+    this.enableHlt = true,
+    this.enableLog = false,
+    this.enableBrk = false,
+    this.swapLeftAndRightArrowKeys = true,
+    this.lemAlternativeHardwareId = false,
+    this.clockManufacturedByNyaElektriska = false,
   });
 
+  /// The endianess to use when loading ROM files, to construct DCPU-16 words
+  /// from the raw file bytes.
+  ///
+  /// Most binaries use [Endian.little], but some files do use [Endian.big].
   final Endian fileLoadEndian;
+
+  /// It's slightly unclear how exactly device memory should be mapped into
+  /// DCPU-16 memory.
+  ///
+  /// Some binaries assume there's only physical memory, and mapping a hardware
+  /// device to memory means that that hardware device will just read from the
+  /// given region of DCPU-16 RAM. ([DeviceMemoryBehaviour.syncInOut], kinda)
+  ///
+  /// Other binaries assume hardware devices have internal RAM as well, and
+  /// mapping a device means hardware and DCPU-16 RAM are synchronized for the
+  /// duration of the mapping. ([DeviceMemoryBehaviour.syncInOut])
+  ///
+  /// Other binaries assume hardware devices have internal RAM, but mapping
+  /// a device means the mapped memory region will exclusively point to the
+  /// hardware device memory only, not DCPU-16 RAM (i.e. they're not
+  /// synchronized) for the duration of the mapping.
+  /// ([DeviceMemoryBehaviour.mapped])
   final DeviceMemoryBehaviour memoryBehaviour;
+
+  /// If true, CLOCK_QUERY (clock interrupt A=1) reports the number of ticks
+  /// passed to the last call to CLOCK_SET (clock interrupt A=1) with an
+  /// argument that's not 0.
+  /// Otherwise, CLOCK_QUERY reports the number of ticks since to the last
+  /// CLOCK_SET with any argument (not just != 0)
+  final bool clockQueryReportsTicksToLastEnable;
+
+  /// Enable decoding & execution of HLT instructions.
+  final bool enableHlt;
+
+  /// Enable decoding & execution of LOG instructions.
+  final bool enableLog;
+
+  /// Enable decoding & execution of BRK instructions.
+  final bool enableBrk;
+
+  /// Report right arrow key when left arrow key is pressed, and other way
+  /// around.
+  final bool swapLeftAndRightArrowKeys;
+
+  /// Make the LEM1802 use 7348 f615 as the hardware id, instead of the normal
+  /// 7349 f615.
+  final bool lemAlternativeHardwareId;
+
+  /// True of the clock should have the NYA ELEKTRISKA Manufacturer ID instead
+  /// of the default 0000 0000 manufacturer id.
+  final bool clockManufacturedByNyaElektriska;
 }
 
 class Dcpu {
@@ -229,6 +285,7 @@ class Dcpu {
   final _fakeAsync = FakeAsync();
   final _realtimeWatch = Stopwatch();
 
+  var halted = false;
   var skip = false;
 
   var _cyclesPerSecond = 100000;
@@ -313,7 +370,7 @@ class Dcpu {
       return result;
     }
 
-    final instr = Instruction.decode(readWord);
+    final instr = Instruction.decode(readWord, flags: compatibilityFlags);
 
     // Only apply pc once we've actually decoded the instruction.
     regs.pc = pc;
@@ -331,7 +388,7 @@ class Dcpu {
       return result;
     }
 
-    return Instruction.decode(readWord).disassemble();
+    return Instruction.decode(readWord, flags: compatibilityFlags).disassemble();
   }
 
   int loadBytes(
@@ -418,7 +475,17 @@ class Dcpu {
     final end = start.add(duration);
 
     while (clock.now().isBefore(end)) {
-      executeOne(disassemble: disassemble);
+      if (halted) {
+        elapseCycles(1);
+
+        _processClockEvents();
+
+        if (interruptController.shouldTrigger()) {
+          interruptController.trigger(this);
+        }
+      } else {
+        executeOne(disassemble: disassemble);
+      }
     }
 
     _realtimeWatch.stop();
@@ -473,5 +540,6 @@ class InterruptController {
     cpu.pushStack(cpu.regs.a);
     cpu.regs.pc = cpu.regs.ia;
     cpu.regs.a = message;
+    cpu.halted = false;
   }
 }
